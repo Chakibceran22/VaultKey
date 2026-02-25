@@ -5,10 +5,17 @@ import { shouldActivate } from './utils/shouldActivate.ts'
 import { MessageType } from '@/types/MessageTypes.ts'
 import { fillFields } from './utils/fillFields.ts'
 
+let lastUrl = window.location.href
+
+const unmount = () => {
+  const existing = document.getElementById('vaultkey-app')
+  if (existing) existing.remove()
+}
 
 const mount = () => {
+  if (document.getElementById('vaultkey-app')) return // avoid duplicates
   const container = document.createElement('div')
-  container.id = 'valutkey-app'
+  container.id = 'vaultkey-app'
   document.body.appendChild(container)
   createRoot(container).render(
     <StrictMode>
@@ -16,31 +23,35 @@ const mount = () => {
     </StrictMode>,
   )
   console.log('[VaultKey] Mounted on:', window.location.hostname)
-
-
 }
 
-if(shouldActivate()) mount()
+const handleNavigation = () => {
+  if (window.location.href === lastUrl) return
+  lastUrl = window.location.href
+
+  unmount()
 
   setTimeout(() => {
-  if (shouldActivate()) {
-    mount()
-  }
-}, 2000)
+    if (shouldActivate()) mount()
+  }, 500)
+}
 
-// observe DOM changes for SPAs (React/Vue/Angular apps)
-const observer = new MutationObserver(() => {
-  if (shouldActivate()) {
-    mount()
-    observer.disconnect() // stop observing once mounted
-  }
+// initial mount
+if (shouldActivate()) mount()
+
+// SPA navigation detection — ONE observer only
+const observer = new MutationObserver(handleNavigation)
+observer.observe(document.body, { childList: true, subtree: true })
+
+// back/forward navigation
+window.addEventListener('popstate', () => {
+  unmount()
+  setTimeout(() => {
+    if (shouldActivate()) mount()
+  }, 500)
 })
 
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-})
-
+// fill fields listener
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === MessageType.FILL_FIELDS) {
     fillFields(msg.payload.email, msg.payload.password)

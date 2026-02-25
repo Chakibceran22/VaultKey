@@ -1,28 +1,22 @@
 import { EMAIL_SELECTORS, PASSWORD_SELECTORS } from "./selectorConfig"
 
 export const fillFields = (email: string, password: string) => {
-    const emailInput = document.querySelector(
-        EMAIL_SELECTORS
-    ) as HTMLInputElement
+  const emailInput = document.querySelector(EMAIL_SELECTORS) as HTMLInputElement
+  const passwordInput = document.querySelector(PASSWORD_SELECTORS) as HTMLInputElement
 
-  const passwordInput = document.querySelector(
-    PASSWORD_SELECTORS
-  ) as HTMLInputElement
-    if (!emailInput || !passwordInput) return
-      emailInput.value = email
-    passwordInput.value = password
-    const triggerEvents = (input: HTMLInputElement) => {
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
-    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }))
-  }
+  if (!emailInput || !passwordInput) return
 
-  triggerEvents(emailInput)
-  triggerEvents(passwordInput)
-    console.log('[VaultKey] Fields filled!')
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, 'value'
+  )?.set
 
+  // set email
+  nativeInputValueSetter?.call(emailInput, email)
+  emailInput.dispatchEvent(new Event('input', { bubbles: true }))
 
+  // set password
+  nativeInputValueSetter?.call(passwordInput, password)
+  passwordInput.dispatchEvent(new Event('input', { bubbles: true }))
 
-
+  console.log('[VaultKey] Fields filled!')
 }

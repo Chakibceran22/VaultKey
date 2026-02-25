@@ -22,8 +22,13 @@ export default defineManifest({
   ],
   content_scripts: [{
     js: ['src/content/main.tsx'],
-    matches: ['https://*/*'],
+    matches: ['https://*/*', 'http://localhost/*',   // ← add this
+    'http://127.0.0.1/*', ],
   }],
+  host_permissions: [
+    'http://localhost/*',    // ← add this
+    'http://127.0.0.1/*',   // ← and this just in case
+  ],
   side_panel: {
     default_path: 'src/sidepanel/index.html',
   },
