@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { fillFields } from '../content/utils/fillFields'
 import { MessageType } from '@/types/MessageTypes'
+import { KeyRound, X, User, Check, LogIn } from 'lucide-react'
 
 // Catppuccin Frappé
 const theme = {
@@ -27,6 +27,7 @@ const FAKE_ACCOUNTS = [
 export default function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [filled, setFilled] = useState(false)
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null)
 
   const handleSelect = (account: typeof FAKE_ACCOUNTS[0]) => {
     setSelected(account.id)
@@ -37,15 +38,15 @@ export default function App() {
     const account = FAKE_ACCOUNTS.find(a => a.id === selected)
     if (!account) return
     chrome.runtime.sendMessage({
-    type: MessageType.FILL_FIELDS,
-    payload: { email: account.email, password: account.password }
-  })
+      type: MessageType.FILL_FIELDS,
+      payload: { email: account.email, password: account.password }
+    })
     setFilled(true)
   }
 
   const handleClose = () => {
-  window.close()
-}
+    window.close()
+  }
 
   return (
     <div style={{
@@ -68,7 +69,18 @@ export default function App() {
         paddingBottom: '16px',
         borderBottom: `1px solid ${theme.surface0}`,
       }}>
-        <span style={{ fontSize: '22px' }}>🔑</span>
+        <div style={{
+          width: '36px',
+          height: '36px',
+          borderRadius: '10px',
+          background: theme.surface0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <KeyRound size={18} color={theme.mauve} />
+        </div>
         <div style={{ flex: 1 }}>
           <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: theme.mauve }}>
             VaultKey
@@ -93,9 +105,9 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '14px',
             transition: 'all 0.15s ease',
             flexShrink: 0,
+            padding: 0,
           }}
           onMouseEnter={e => {
             (e.currentTarget as HTMLButtonElement).style.background = theme.red
@@ -108,7 +120,7 @@ export default function App() {
             ;(e.currentTarget as HTMLButtonElement).style.borderColor = theme.surface1
           }}
         >
-          ✕
+          <X size={14} />
         </button>
       </div>
 
@@ -131,48 +143,57 @@ export default function App() {
         flexDirection: 'column',
         gap: '8px',
       }}>
-        {FAKE_ACCOUNTS.map((account) => (
-          <div
-            key={account.id}
-            onClick={() => handleSelect(account)}
-            style={{
-              padding: '12px 14px',
-              background: selected === account.id ? theme.surface1 : theme.mantle,
-              border: `1px solid ${selected === account.id ? theme.mauve : theme.surface0}`,
-              borderRadius: '10px',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-            }}
-          >
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
-              background: theme.surface0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '14px',
-              flexShrink: 0,
-            }}>
-              {account.email[0].toUpperCase()}
+        {FAKE_ACCOUNTS.map((account) => {
+          const isSelected = selected === account.id
+          const isHovered = hoveredCard === account.id
+          return (
+            <div
+              key={account.id}
+              onClick={() => handleSelect(account)}
+              onMouseEnter={() => setHoveredCard(account.id)}
+              onMouseLeave={() => setHoveredCard(null)}
+              style={{
+                padding: '12px 14px',
+                background: isSelected ? theme.surface1 : isHovered ? theme.surface0 : theme.mantle,
+                border: `1px solid ${isSelected ? theme.mauve : isHovered ? theme.surface1 : theme.surface0}`,
+                borderRadius: '10px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: isSelected ? theme.mauve : theme.surface0,
+                color: isSelected ? theme.crust : theme.subtext,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                transition: 'all 0.15s ease',
+              }}>
+                <User size={15} />
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: '13px', color: theme.text, fontWeight: 500 }}>
+                  {account.email}
+                </p>
+                <p style={{ margin: 0, fontSize: '11px', color: theme.subtext }}>
+                  ••••••••
+                </p>
+              </div>
+              {isSelected && (
+                <span style={{ marginLeft: 'auto', color: theme.mauve }}>
+                  <Check size={16} strokeWidth={2.5} />
+                </span>
+              )}
             </div>
-            <div>
-              <p style={{ margin: 0, fontSize: '13px', color: theme.text, fontWeight: 500 }}>
-                {account.email}
-              </p>
-              <p style={{ margin: 0, fontSize: '11px', color: theme.subtext }}>
-                ••••••••
-              </p>
-            </div>
-            {selected === account.id && (
-              <span style={{ marginLeft: 'auto', color: theme.mauve, fontSize: '16px' }}>✓</span>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* Autofill button */}
@@ -190,9 +211,17 @@ export default function App() {
           fontSize: '14px',
           fontWeight: 600,
           transition: 'all 0.2s ease',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
         }}
       >
-        {filled ? '✓ Filled!' : 'Autofill'}
+        {filled ? (
+          <><Check size={16} strokeWidth={2.5} /> Filled!</>
+        ) : (
+          <><LogIn size={16} /> Autofill</>
+        )}
       </button>
 
     </div>
