@@ -1,13 +1,26 @@
+import { MessageType } from "./types/MessageTypes"
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[VaultKey] Extension installed!')
-  
-  // set default backend URL
   chrome.storage.local.set({ backendUrl: 'http://localhost:3000' })
-  console.log('[VaultKey] Default backend URL set')
 })
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  console.log('[VaultKey] Message received:', msg)
-  sendResponse({ success: true })
+
+  if (msg.type === MessageType.OPEN_SIDEPANEL) {
+    chrome.sidePanel.open({ tabId: sender.tab!.id! })
+    sendResponse({ success: true })
+  }
+
+  if (msg.type === MessageType.FILL_FIELDS) {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      chrome.tabs.sendMessage(tab.id!, {
+        type: MessageType.FILL_FIELDS,
+        payload: msg.payload
+      })
+      sendResponse({ success: true }) // ← inside the callback
+    })
+  }
+
   return true
 })

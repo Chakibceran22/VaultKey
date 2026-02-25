@@ -12,11 +12,13 @@ export default defineManifest({
     default_icon: {
       48: 'public/logo.png',
     },
-    default_popup: 'src/popup/index.html',
+    // removed default_popup
   },
   permissions: [
     'sidePanel',
-    'contentSettings',
+    'storage',
+    'tabs',
+    'activeTab',
   ],
   content_scripts: [{
     js: ['src/content/main.tsx'],
@@ -25,8 +27,7 @@ export default defineManifest({
   side_panel: {
     default_path: 'src/sidepanel/index.html',
   },
-  background :{
+  background: {
     service_worker: 'src/background.ts'
   }
-  
 })
