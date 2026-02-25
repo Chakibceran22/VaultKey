@@ -2,23 +2,7 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import { MessageType } from '@/types/MessageTypes'
 import { KeyRound, Save, Check, AlertCircle } from 'lucide-react'
-
-const EMAIL_SELECTORS = [
-  'input[type="email"]',
-  'input[name*="email"]',
-  'input[name*="username"]',
-  'input[name*="user"]',
-  'input[name*="login"]',
-  'input[id*="email"]',
-  'input[id*="username"]',
-  'input[autocomplete="email"]',
-  'input[autocomplete="username"]',
-].join(',')
-
-const PASSWORD_SELECTORS = [
-  'input[type="password"]',
-  'input[autocomplete="current-password"]',
-].join(',')
+import { EMAIL_SELECTORS, PASSWORD_SELECTORS } from '../utils/selectorConfig'
 
 type Toast = { message: string; type: 'success' | 'error' } | null
 
