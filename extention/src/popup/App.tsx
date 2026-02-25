@@ -3,8 +3,14 @@ import reactLogo from '@/assets/react.svg'
 import viteLogo from '@/assets/vite.svg'
 import HelloWorld from '@/components/HelloWorld'
 import './App.css'
+import { useEffect } from 'react'
 
 export default function App() {
+  useEffect(() => {
+    chrome.storage.local.get('backendUrl', async ({backendUrl} : {backendUrl: string}) => {
+      console.log(backendUrl)
+    })
+  },[])
   return (
     <div>
       <a href="https://vite.dev" target="_blank" rel="noreferrer">
