@@ -19,6 +19,7 @@ export default defineManifest({
     'storage',
     'tabs',
     'activeTab',
+    'alarms'
   ],
   content_scripts: [{
     js: ['src/content/main.tsx'],
