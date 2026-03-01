@@ -25,6 +25,7 @@ export default function Login() {
     setTimeout(() => {
       const success = login(password)
       if (success) {
+         window.api.verifyMasterPassword("hellwor work")
         navigate('/vault')
       } else {
         setError('Invalid master password')

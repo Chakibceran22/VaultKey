@@ -4,7 +4,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  main: {},
+  main: {
+    define: {
+      __API_URL__: JSON.stringify('http://localhost:3000')
+    }
+  },
   preload: {},
   renderer: {
     resolve: {
