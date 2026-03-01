@@ -29,6 +29,3 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-extraResources:
-  - from: resources/config.json
-    to: config.json
