@@ -40,40 +40,49 @@ export default function AddCredential() {
       </header>
 
       {/* Form */}
-      <div className="flex-1 overflow-y-auto px-5 py-5">
-        <form onSubmit={handleSave} className="max-w-md space-y-5">
-          <FieldGroup label="Domain">
-            <Input
-              placeholder="example.com"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              className="bg-mantle border-surface0"
-              required
-            />
-          </FieldGroup>
+      <div className="flex-1 overflow-y-auto px-5 py-5 flex justify-center">
+        <form onSubmit={handleSave} className="w-full max-w-lg space-y-4">
+          {/* Site info - domain + username side by side */}
+          <div className="bg-mantle rounded-xl border border-surface0 p-4 space-y-4">
+            <p className="text-xs font-medium text-overlay0 uppercase tracking-wider">Site info</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs text-subtext0">Domain</label>
+                <Input
+                  placeholder="example.com"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  className="bg-base border-surface0"
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-subtext0">Username</label>
+                <Input
+                  placeholder="john_doe"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="bg-base border-surface0"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-subtext0">Email</label>
+              <Input
+                type="email"
+                placeholder="john@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="bg-base border-surface0"
+                required
+              />
+            </div>
+          </div>
 
-          <FieldGroup label="Username">
-            <Input
-              placeholder="john_doe"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="bg-mantle border-surface0"
-              required
-            />
-          </FieldGroup>
-
-          <FieldGroup label="Email">
-            <Input
-              type="email"
-              placeholder="john@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="bg-mantle border-surface0"
-              required
-            />
-          </FieldGroup>
-
-          <FieldGroup label="Password">
+          {/* Password section - its own card */}
+          <div className="bg-mantle rounded-xl border border-surface0 p-4 space-y-3">
+            <p className="text-xs font-medium text-overlay0 uppercase tracking-wider">Password</p>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Input
@@ -81,7 +90,7 @@ export default function AddCredential() {
                   placeholder="Enter or generate"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pr-10 bg-mantle border-surface0"
+                  className="pr-10 bg-base border-surface0"
                   required
                 />
                 <button
@@ -107,7 +116,7 @@ export default function AddCredential() {
             </div>
 
             {strength && (
-              <div className="mt-2.5 space-y-1.5">
+              <div className="space-y-1.5">
                 <div className="flex gap-1">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div
@@ -124,38 +133,28 @@ export default function AddCredential() {
                 </p>
               </div>
             )}
-          </FieldGroup>
-
-          <div className="pt-2">
-            <button
-              type="submit"
-              disabled={saved}
-              className="w-full h-11 bg-primary text-primary-foreground rounded-lg font-medium flex items-center justify-center gap-2 hover:brightness-110 transition-all disabled:opacity-70 cursor-pointer"
-            >
-              {saved ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  Saved
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  Save Credential
-                </>
-              )}
-            </button>
           </div>
+
+          {/* Save */}
+          <button
+            type="submit"
+            disabled={saved}
+            className="w-full h-11 bg-primary text-primary-foreground rounded-lg font-medium flex items-center justify-center gap-2 hover:brightness-110 transition-all disabled:opacity-70 cursor-pointer"
+          >
+            {saved ? (
+              <>
+                <Check className="w-4 h-4" />
+                Saved
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Save Credential
+              </>
+            )}
+          </button>
         </form>
       </div>
-    </div>
-  )
-}
-
-function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-subtext0 uppercase tracking-wider">{label}</label>
-      {children}
     </div>
   )
 }

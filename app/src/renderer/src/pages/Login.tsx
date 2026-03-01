@@ -40,7 +40,7 @@ export default function Login() {
           <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mb-5 ring-1 ring-primary/20">
             <Shield className="w-10 h-10 text-primary" />
           </div>
-          <h1 className="text-2xl font-semibold text-foreground tracking-tight">PassVault</h1>
+          <h1 className="text-2xl font-semibold text-foreground tracking-tight">VaultKey</h1>
           <p className="text-sm text-muted-foreground mt-1.5">Enter your master password to unlock</p>
         </div>
 
@@ -57,7 +57,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-overlay1 hover:text-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-overlay1 hover:text-foreground transition-colors cursor-pointer"
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>

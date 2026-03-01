@@ -95,7 +95,9 @@ function CredentialCard({ credential }: { credential: Credential }) {
         <div className="flex items-center gap-2.5 min-w-0">
           <KeyRound className="w-3.5 h-3.5 text-overlay0 shrink-0" />
           <span className="text-sm font-mono text-subtext0 truncate">
-            {showPassword ? credential.password : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
+            {showPassword
+              ? credential.password
+              : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
           </span>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
