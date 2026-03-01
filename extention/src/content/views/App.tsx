@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import './App.css'
 import { MessageType } from '@/types/MessageTypes'
 import { KeyRound, Save, Check, AlertCircle } from 'lucide-react'
@@ -8,17 +8,10 @@ type Toast = { message: string; type: 'success' | 'error' } | null
 
 function App() {
   const [isLoading, setIsLoading] = useState(false)
-  const [isSignup, setIsSignup] = useState(false)
   const [saved, setSaved] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
 
-  useEffect(() => {
-    const url = window.location.pathname.toLowerCase()
-    const signupPatterns = ['/register', '/signup', '/sign-up', '/create-account', '/join']
-    const isSignupUrl = signupPatterns.some(p => url.includes(p))
-    const hasTwoPasswordFields = document.querySelectorAll('input[type="password"]').length >= 2
-    setIsSignup(isSignupUrl || hasTwoPasswordFields)
-  }, [])
+
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type })
@@ -32,33 +25,6 @@ function App() {
     })
   }
 
-  const handleSave = () => {
-    const emailInput = document.querySelector(EMAIL_SELECTORS) as HTMLInputElement
-    const passwordInput = document.querySelector(PASSWORD_SELECTORS) as HTMLInputElement
-
-    if (!emailInput?.value || !passwordInput?.value) {
-      showToast('Fill in your email and password first', 'error')
-      return
-    }
-
-    console.log(emailInput.value, passwordInput.value)
-    chrome.runtime.sendMessage({
-      type: MessageType.SAVE_PASSWORD,
-      payload: {
-        domain: window.location.hostname,
-        email: emailInput.value,
-        password: passwordInput.value,
-      }
-    })
-
-    setSaved(true)
-    showToast('Saved successfully', 'success')
-    setTimeout(() => setSaved(false), 2500)
-  }
-
-  const accentColor = isSignup ? '#a6d189' : '#cba6f7'
-  const glowColor = isSignup ? 'rgba(166,209,137,0.3)' : 'rgba(203,166,247,0.3)'
-  const glowHover = isSignup ? 'rgba(166,209,137,0.5)' : 'rgba(203,166,247,0.5)'
 
   return (
     <div style={{
@@ -98,32 +64,32 @@ function App() {
       )}
 
       <button
-        onClick={isSignup ? handleSave : openSidePanel}
+        onClick={openSidePanel}
         disabled={isLoading}
         style={{
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          border: `2px solid ${accentColor}`,
+          border: `2px solid ${"#cba6f7"}`,
           background: '#1e1e2e',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: `0 4px 20px ${glowColor}`,
+          boxShadow: `0 4px 20px ${'rgba(203,166,247,0.3)'}`,
           transition: 'all 0.2s ease',
-          color: accentColor,
+          color: "#cba6f7",
         }}
         onMouseEnter={e => {
           (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.1)'
-          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 24px ${glowHover}`
+          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 24px ${'rgba(203,166,247,0.5)'}`
         }}
         onMouseLeave={e => {
           (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'
-          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 20px ${glowColor}`
+          ;(e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 20px ${'rgba(203,166,247,0.3)'}`
         }}
       >
-        {saved ? <Check size={20} strokeWidth={2.5} /> : isSignup ? <Save size={20} /> : <KeyRound size={20} />}
+        {saved ? <Check size={20} strokeWidth={2.5} /> :  <KeyRound size={20} />}
       </button>
     </div>
   )
