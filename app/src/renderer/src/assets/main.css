@@ -1,1 +1,105 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Catppuccin Frappe - Semantic (shadcn-compatible) */
+  --color-background: #303446;
+  --color-foreground: #c6d0f5;
+  --color-card: #292c3c;
+  --color-card-foreground: #c6d0f5;
+  --color-popover: #292c3c;
+  --color-popover-foreground: #c6d0f5;
+  --color-primary: #ca9ee6;
+  --color-primary-foreground: #232634;
+  --color-secondary: #414559;
+  --color-secondary-foreground: #c6d0f5;
+  --color-muted: #414559;
+  --color-muted-foreground: #a5adce;
+  --color-accent: #51576d;
+  --color-accent-foreground: #c6d0f5;
+  --color-destructive: #e78284;
+  --color-destructive-foreground: #232634;
+  --color-border: #414559;
+  --color-input: #414559;
+  --color-ring: #ca9ee6;
+
+  /* Catppuccin Frappe - Named palette */
+  --color-crust: #232634;
+  --color-mantle: #292c3c;
+  --color-base: #303446;
+  --color-surface0: #414559;
+  --color-surface1: #51576d;
+  --color-surface2: #626880;
+  --color-overlay0: #737994;
+  --color-overlay1: #838ba7;
+  --color-overlay2: #949cbb;
+  --color-subtext0: #a5adce;
+  --color-subtext1: #b5bfe2;
+  --color-text: #c6d0f5;
+  --color-lavender: #babbf1;
+  --color-sapphire: #85c1dc;
+  --color-sky: #99d1db;
+  --color-teal: #81c8be;
+  --color-green: #a6d189;
+  --color-yellow: #e5c890;
+  --color-peach: #ef9f76;
+  --color-maroon: #ea999c;
+  --color-red: #e78284;
+  --color-mauve: #ca9ee6;
+  --color-pink: #f4b8e4;
+  --color-flamingo: #eebebe;
+  --color-rosewater: #f2d5cf;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+  }
+
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background-color: #303446;
+    color: #c6d0f5;
+    line-height: 1.6;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #292c3c;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #51576d;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #626880;
+  }
+
+  ::selection {
+    background: rgba(140, 170, 238, 0.3);
+    color: #c6d0f5;
+  }
+}
