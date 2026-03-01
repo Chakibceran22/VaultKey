@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: password_pg_db
+    environment:
+      POSTGRES_DB: password_db
+      POSTGRES_USER: chakib
+      POSTGRES_PASSWORD: ChakibLovesMimane123@.
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgpasswordata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chakib -d password_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgpasswordata:
