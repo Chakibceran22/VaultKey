@@ -8,6 +8,7 @@ function createWindow(): void {
     width: 1280,
     height: 850,
     show: false,
+    title:"ValultKey",
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
