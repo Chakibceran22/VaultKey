@@ -5,10 +5,19 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "commonjs"
 }
 
 datasource db {
   provider = "postgresql"
 }
+
+model MasterPassword {
+  id Int @id @default(autoincrement())
+  hash String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+}
+
