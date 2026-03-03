@@ -1,13 +1,15 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger,  OnModuleInit } from '@nestjs/common';
+import type { LoggerService } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2'
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 @Injectable()
 export class InitService implements OnModuleInit {
-    private readonly logger = new Logger(InitService.name);
     constructor(
         private readonly prisma: PrismaService,
-        private readonly configService: ConfigService
+        private readonly configService: ConfigService,
+        @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: LoggerService
     ){}
 
     getMasterPassword() {
@@ -21,7 +23,7 @@ export class InitService implements OnModuleInit {
 
     async initDB() {
         if(await this.isInitialized()) {
-            this.logger.log("Password already set")
+            this.logger.log("Password already set", InitService.name)
             return
         }
         const masterPassword = this.getMasterPassword();

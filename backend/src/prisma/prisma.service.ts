@@ -1,11 +1,15 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import type { LoggerService } from '@nestjs/common';
 import { PrismaClient } from 'generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy { 
-    private readonly logger = new Logger(PrismaService.name);
-    constructor() {
+    
+    constructor(
+        @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: LoggerService
+    ) {
         const adapter = new PrismaPg({
             connectionString: process.env.DATABASE_URL as string,
         });
