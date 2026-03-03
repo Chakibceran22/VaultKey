@@ -1,9 +1,10 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2'
 @Injectable()
 export class InitService implements OnModuleInit {
+    private readonly logger = new Logger(InitService.name);
     constructor(
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService
@@ -20,18 +21,19 @@ export class InitService implements OnModuleInit {
 
     async initDB() {
         if(await this.isInitialized()) {
-            console.log("Password already set")
+            this.logger.log("Password already set")
             return
         }
         const masterPassword = this.getMasterPassword();
         if(!masterPassword) {
+            this.logger.error("Master Password is not set in the env file")
              throw new Error("Master Password is not set in the env file")
         }
         const hashMasterPassword = await argon2.hash(masterPassword);
         await this.prisma.masterPassword.create({
             data: {hash: hashMasterPassword}
         })
-        console.log("Master password created in the DB")
+        this.logger.log("Master password created in the DB")
         return
     }
     async onModuleInit() {
