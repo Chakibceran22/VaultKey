@@ -24,8 +24,6 @@ model AuthKey {
 model Domain {
   id Int @id @default(autoincrement())
   name String @unique()
-  totalAccounts Int @default(0)
-
   credentials Credential[]
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())

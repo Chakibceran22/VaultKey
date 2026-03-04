@@ -12,6 +12,7 @@ declare global {
       checkAuthStatus: () => Promise<{ status: string } | { error: true }>
       registerAuthKey: (authKey: string) => Promise<{success: boolean}>
       fetchDomains: (token: string) => Promise<{ domains: DomainGroup[] } | { error: true }>
+      registerDomain: (token: string, domainName: string) => Promise<{ success: boolean } | { error: true }>
     }
   }
 }

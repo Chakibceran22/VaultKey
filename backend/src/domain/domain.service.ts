@@ -8,8 +8,8 @@ import { DomainDTO } from './dtos/DomainDTO';
 export class DomainService {
     constructor(
         private readonly prisma: PrismaService,
-        @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger   
-    ){}
+        @Inject(WINSTON_MODULE_NEST_PROVIDER) private readonly logger: Logger
+    ) { }
 
     async registerDomain(domainDTO: DomainDTO) {
         try {
@@ -19,11 +19,11 @@ export class DomainService {
                 }
             })
             this.logger.log(`Domain ${domainDTO.name} registered successfully`, { context: 'DomainService' });
-            if(!domain) {
+            if (!domain) {
                 throw new InternalServerErrorException('Failed to register domain');
             }
             return { success: true }
-            
+
         } catch (error) {
             this.logger.error(`Error in registerDomain: ${error.message}`, { context: 'DomainService' });
             throw new InternalServerErrorException('Failed to register domain');
@@ -33,7 +33,10 @@ export class DomainService {
 
     async fetchDomains() {
         try {
-            const domains = await this.prisma.domain.findMany()
+            const domains = await this.prisma.domain.findMany({
+                include: { _count: { select: { credentials: true } } }
+            })
+
             this.logger.log(`Fetched ${domains.length} domains`, { context: 'DomainService' });
             return {
                 domains

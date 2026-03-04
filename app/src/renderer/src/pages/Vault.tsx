@@ -10,9 +10,11 @@ import { useQuery } from '@tanstack/react-query'
 interface Domain {
   id: number
   name: string
-  totalAccounts: number
   createdAt: string
   updatedAt: string
+  _count: {
+    credentials: number
+  }
 }
 
 export default function Vault() {
@@ -112,7 +114,7 @@ export default function Vault() {
                   <p className="text-sm font-medium text-foreground truncate">{domain.name}</p>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className="text-xs text-overlay0">
-                      {domain.totalAccounts} account{domain.totalAccounts !== 1 ? 's' : ''}
+                      {domain._count.credentials} account{domain._count.credentials !== 1 ? 's' : ''}
                     </span>
                     <span className="text-xs text-surface2">·</span>
                     <span className="text-xs text-overlay0">
