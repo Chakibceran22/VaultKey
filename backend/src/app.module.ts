@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 
 import { PrismaModule } from './prisma/prisma.module';
-
+import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import { WinstonModule } from 'nest-winston';
 import { AuthModule } from './auth/auth.module';
+import { PasswordService } from './password/password.service';
+import { PasswordController } from './password/password.controller';
+import { PasswordModule } from './password/password.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
 
@@ -39,9 +43,22 @@ import 'winston-daily-rotate-file';
 
       ]
     }),
-    AuthModule
+     JwtModule.registerAsync({
+      global: true,
+      
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => {
+        console.log("JWT started")
+        return {
+          secret: configService.get<string>('JWT_SECRET') || 'default_secret',
+          signOptions: { expiresIn: '24h' },
+        }
+      }
+    }),
+    AuthModule,
+    PasswordModule
   ],
-  controllers: [],
-  providers: [],
+  controllers: [PasswordController],
+  providers: [PasswordService],
 })
 export class AppModule {}

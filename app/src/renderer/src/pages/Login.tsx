@@ -25,6 +25,7 @@ export default function Login() {
 
     try {
       const derivedKeys = await deriveKeys(password) 
+      console.log("Derived keys on login:", derivedKeys)
       const result = await login(derivedKeys.authKey, derivedKeys.encryptionKey)
       
       if (!result) {
