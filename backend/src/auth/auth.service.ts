@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthStatusResponseDTO } from './dtos/AuthStatusResponse.dto';
-
+import { AuthKeyDTO } from './dtos/AuthKeyDTO';
 @Injectable()
 export class AuthService {
     constructor(
@@ -32,5 +32,23 @@ export class AuthService {
             }
             
         }
+    }
+
+    async registerAuthKey(authKeyDTO: AuthKeyDTO) {
+        try {
+            const data = await this.prisma.authKey.create({
+                data: {
+                    hash: authKeyDTO.authKey
+                }
+            })
+            this.logger.log("Auth key registered successfully", { context: 'AuthService' });
+            return { status: 'success' }
+            
+        } catch (error) {
+            return {
+                status: false
+            }
+        }
+
     }
 }
