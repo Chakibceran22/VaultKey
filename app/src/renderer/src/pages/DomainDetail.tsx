@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound } from 'lucide-react'
 import { mockCredentials, getDomainColor, formatRelativeTime } from '../data/mock'
@@ -8,6 +8,7 @@ export default function DomainDetail() {
   const { domain } = useParams<{ domain: string }>()
   const navigate = useNavigate()
   const decodedDomain = decodeURIComponent(domain || '')
+
 
   const credentials = useMemo(
     () => mockCredentials.filter((c) => c.domain === decodedDomain),

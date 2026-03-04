@@ -25,14 +25,13 @@ export default function Login() {
 
     try {
       const derivedKeys = await deriveKeys(password) 
-      console.log(derivedKeys)
-      const result = await window.api.verifyMasterPassword(derivedKeys.authKey)
+      const result = await login(derivedKeys.authKey, derivedKeys.encryptionKey)
+      
       if (!result) {
         toast.error("Wrong Password")
         return
       }
       toast.success("Login successful!")
-      
 
       
     } catch (error) {

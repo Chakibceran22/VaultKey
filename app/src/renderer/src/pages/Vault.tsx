@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Plus, LogOut, ChevronRight, Globe, Key, Shield } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
@@ -9,7 +9,7 @@ export default function Vault() {
   const [search, setSearch] = useState('')
   const { logout } = useAuth()
   const navigate = useNavigate()
-
+ 
   const domainGroups = useMemo(() => groupByDomain(mockCredentials), [])
 
   const filtered = useMemo(() => {

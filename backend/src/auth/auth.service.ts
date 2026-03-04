@@ -68,7 +68,10 @@ export class AuthService {
                 const token = this.jwtService.sign({ sub: 'master-user' }, { expiresIn: '7h' });
                 return { valid: true, token };
             }
-            return { valid: false };
+            return { 
+                valid: false,
+                token: null
+             };
         } catch (error) {
             throw new InternalServerErrorException('Error verifying master password')
         }
