@@ -1,30 +1,38 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Plus, LogOut, ChevronRight, Globe, Key, Shield } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
-import { mockCredentials, groupByDomain, getDomainColor, formatRelativeTime } from '../data/mock'
+import { getDomainColor, formatRelativeTime } from '../data/mock'
+import { domainService } from '@renderer/lib/domainsService'
+import { useQuery } from '@tanstack/react-query'
+
+interface Domain {
+  id: number
+  name: string
+  totalAccounts: number
+  createdAt: string
+  updatedAt: string
+}
 
 export default function Vault() {
   const [search, setSearch] = useState('')
-  const { logout } = useAuth()
+  const { logout, token } = useAuth()
   const navigate = useNavigate()
- 
-  const domainGroups = useMemo(() => groupByDomain(mockCredentials), [])
+
+  const { data: domains = [] } = useQuery<Domain[]>({
+    queryKey: ['domains'],
+    queryFn: () => domainService.getDomains(token!),
+    enabled: !!token,
+  })
 
   const filtered = useMemo(() => {
-    if (!search) return domainGroups
+    if (!search) return domains
     const q = search.toLowerCase()
-    return domainGroups.filter(
-      (g) =>
-        g.domain.toLowerCase().includes(q) ||
-        g.credentials.some(
-          (c) => c.username.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
-        )
-    )
-  }, [search, domainGroups])
+    return domains.filter((d) => d.name.toLowerCase().includes(q))
+  }, [search, domains])
 
-  const totalCredentials = mockCredentials.length
+  const totalCredentials = domains.reduce((sum, d) => sum + d.totalAccounts, 0)
 
   return (
     <div className="flex flex-col h-full bg-base">
@@ -84,12 +92,12 @@ export default function Vault() {
       <div className="flex-1 overflow-y-auto px-5 pb-5 pt-2">
         {filtered.length > 0 ? (
           <div className="grid grid-cols-2 gap-2.5">
-            {filtered.map((group) => {
-              const color = getDomainColor(group.domain)
+            {filtered.map((domain) => {
+              const color = getDomainColor(domain.name)
               return (
                 <button
-                  key={group.domain}
-                  onClick={() => navigate(`/vault/${encodeURIComponent(group.domain)}`)}
+                  key={domain.id}
+                  onClick={() => navigate(`/vault/${encodeURIComponent(domain.name)}`)}
                   className="group flex flex-col p-3.5 bg-mantle rounded-xl border border-surface0 hover:border-surface1 transition-all text-left cursor-pointer"
                 >
                   <div className="flex items-start justify-between mb-3">
@@ -97,18 +105,18 @@ export default function Vault() {
                       className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold"
                       style={{ backgroundColor: color, color: '#232634' }}
                     >
-                      {group.domain[0].toUpperCase()}
+                      {domain.name[0].toUpperCase()}
                     </div>
                     <ChevronRight className="w-4 h-4 text-surface2 opacity-0 group-hover:opacity-100 transition-opacity mt-1" />
                   </div>
-                  <p className="text-sm font-medium text-foreground truncate">{group.domain}</p>
+                  <p className="text-sm font-medium text-foreground truncate">{domain.name}</p>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className="text-xs text-overlay0">
-                      {group.totalAccounts} account{group.totalAccounts !== 1 ? 's' : ''}
+                      {domain.totalAccounts} account{domain.totalAccounts !== 1 ? 's' : ''}
                     </span>
                     <span className="text-xs text-surface2">·</span>
                     <span className="text-xs text-overlay0">
-                      {formatRelativeTime(group.lastUsed)}
+                      {formatRelativeTime(domain.updatedAt)}
                     </span>
                   </div>
                 </button>

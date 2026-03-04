@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus } from 'lucide-react'
 import { mockCredentials, getDomainColor, formatRelativeTime } from '../data/mock'

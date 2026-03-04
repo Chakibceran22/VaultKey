@@ -71,6 +71,34 @@ ipcMain.handle('verify-master', async (_, password: string) => {
   console.log(password)
 })
 
+ipcMain.handle('fetch-domains', async (_, token :string) => {
+  try {
+    const response = await axios.get(`${API_URL}/domain/fetch`, {
+      headers: {
+        Authorization : `Bearer ${token}`
+      }
+    })
+    return response.data
+  } catch (error) {
+    console.log("Error fetching domains:", error)
+    throw new Error('Failed to fetch domains')
+  }
+})
+
+ipcMain.handle('register-domain', async (_, token: string, domainName: string) => {
+  try {
+    const response = await axios.post(`${API_URL}/domain/register`, { name: domainName }, {
+      headers:{
+        Authorization : `Bearer ${token}`
+      }
+    })
+    return response.data
+  } catch (error: any ) {
+    console.log("Error registering domain:", error)
+    throw new Error('Failed to register domain')
+  }
+})
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.

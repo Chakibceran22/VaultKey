@@ -2,17 +2,39 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Globe, Check } from 'lucide-react'
 import { Input } from '../components/ui/input'
+import { toast } from 'sonner'
+import { domainService } from '@renderer/lib/domainsService'
+import { useAuth } from '@renderer/store/auth'
 
 export default function AddDomain() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [saved, setSaved] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const {token} = useAuth()
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async(e: React.FormEvent) => {
     e.preventDefault()
-    setSaved(true)
-    // TODO: call backend to create domain
-    setTimeout(() => navigate('/vault'), 800)
+    if(!token) {
+      toast.error('You must be logged in to add a domain')
+      return
+    }
+    setIsLoading(true)
+    try {
+      const result = await domainService.registerDomain(token, name)
+      if(result) {
+        setSaved(true)
+        toast.success('Domain added successfully!')
+        setTimeout(() => navigate('/vault'), 800)
+        return
+      }
+      toast.error('Failed to add domain. This Domain Already Exists.')
+    } catch (error) {
+      console.log("Error saving domain:", error)
+      toast.error('Failed to add domain. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -48,7 +70,7 @@ export default function AddDomain() {
 
           <button
             type="submit"
-            disabled={saved}
+            disabled={isLoading || saved}
             className="w-full h-11 bg-primary text-primary-foreground rounded-lg font-medium flex items-center justify-center gap-2 hover:brightness-110 transition-all disabled:opacity-70 cursor-pointer"
           >
             {saved ? (
@@ -56,6 +78,8 @@ export default function AddDomain() {
                 <Check className="w-4 h-4" />
                 Saved
               </>
+            ) : isLoading ? (
+              <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
             ) : (
               <>
                 <Globe className="w-4 h-4" />

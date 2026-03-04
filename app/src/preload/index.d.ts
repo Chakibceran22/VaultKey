@@ -1,4 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
+import { DomainGroup } from '@renderer/types'
 
 declare global {
   interface Window {
@@ -9,7 +10,8 @@ declare global {
         token : string | null
       }>
       checkAuthStatus: () => Promise<{ status: string } | { error: true }>
-      registerAuthKey: (authKey: string) => Promise<{status: success}>
+      registerAuthKey: (authKey: string) => Promise<{success: boolean}>
+      fetchDomains: (token: string) => Promise<{ domains: DomainGroup[] } | { error: true }>
     }
   }
 }

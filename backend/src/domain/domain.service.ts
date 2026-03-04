@@ -29,4 +29,17 @@ export class DomainService {
             throw new InternalServerErrorException('Failed to register domain');
         }
     }
+
+
+    async fetchDomains() {
+        try {
+            const domains = await this.prisma.domain.findMany()
+            this.logger.log(`Fetched ${domains.length} domains`, { context: 'DomainService' });
+            return {
+                domains
+            }
+        } catch (error) {
+            throw new InternalServerErrorException('Failed to fetch domains');
+        }
+    }
 }

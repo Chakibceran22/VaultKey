@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { Toaster } from 'sonner'
 import { useAuth } from './store/auth'
 import { useAppStore, useAppInit } from './store/app'
@@ -98,17 +100,29 @@ function AppRoutes() {
   )
 }
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5,
+      retry: 1,
+    },
+  },
+})
+
 export default function App() {
   return (
-    <HashRouter>
-      <div className="h-full w-full bg-base text-foreground">
-        <Toaster
-          position="bottom-right"
-          theme="dark"
-          icons={{ success: undefined, error: undefined }}
-        />
-        <AppRoutes />
-      </div>
-    </HashRouter>
+    <QueryClientProvider client={queryClient}>
+      <HashRouter>
+        <div className="h-full w-full bg-base text-foreground">
+          <Toaster
+            position="bottom-right"
+            theme="dark"
+            icons={{ success: undefined, error: undefined }}
+          />
+          <AppRoutes />
+        </div>
+      </HashRouter>
+      <ReactQueryDevtools initialIsOpen={false} />
+    </QueryClientProvider>
   )
 }

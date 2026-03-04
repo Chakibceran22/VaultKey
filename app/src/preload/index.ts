@@ -5,7 +5,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   verifyMasterPassword: (password: string) => ipcRenderer.invoke('verify-master', password),
   checkAuthStatus: () => ipcRenderer.invoke('auth-status'),
-  registerAuthKey: (authKey: string) => ipcRenderer.invoke('register-auth-key', authKey)
+  registerAuthKey: (authKey: string) => ipcRenderer.invoke('register-auth-key', authKey),
+  fetchDomains: (token: string) => ipcRenderer.invoke('fetch-domains', token),
+  registerDomain: (token: string, domainName: string) => ipcRenderer.invoke('register-domain', token, domainName)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
