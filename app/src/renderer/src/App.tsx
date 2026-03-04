@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from './store/auth'
 import { useAppStore, useAppInit } from './store/app'
+import { AuthStatus } from './types'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Vault from './pages/Vault'
@@ -31,7 +32,7 @@ function AppInit() {
   useEffect(() => {
     checkAuthStatus()
       .then((result) => {
-        if (result === 'needs_signup') {
+        if (result === AuthStatus.NEEDS_SIGNUP) {
           navigate('/signup', { replace: true })
         } else {
           navigate('/login', { replace: true })

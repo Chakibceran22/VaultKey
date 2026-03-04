@@ -4,7 +4,8 @@ declare global {
   interface Window {
     electron: ElectronAPI
     api: {
-      verifyMasterPassword : (password: string) => Promise<boolean>
+      verifyMasterPassword: (password: string) => Promise<boolean>
+      checkAuthStatus: () => Promise<{ status: string } | { error: true }>
     }
   }
 }

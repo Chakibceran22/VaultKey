@@ -1,3 +1,9 @@
+export enum AuthStatus {
+  NEEDS_SIGNUP = 'NEEDS_SIGNUP',
+  NEEDS_LOGIN = 'NEEDS_LOGIN',
+  ERROR = 'ERROR',
+}
+
 export interface Credential {
   id: string
   domain: string

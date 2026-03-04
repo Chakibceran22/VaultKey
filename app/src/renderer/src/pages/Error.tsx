@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ShieldAlert, RefreshCw } from 'lucide-react'
 import { useAppInit } from '@renderer/store/app'
+import { AuthStatus } from '@renderer/types'
 
 export default function Error() {
   const [isRetrying, setIsRetrying] = useState(false)
@@ -12,9 +13,9 @@ export default function Error() {
     setIsRetrying(true)
     try {
       const status = await checkAuthStatus()
-      if (status === 'needs_signup') {
+      if (status === AuthStatus.NEEDS_SIGNUP) {
         navigate('/signup', { replace: true })
-      } else if (status === 'needs_login') {
+      } else if (status === AuthStatus.NEEDS_LOGIN) {
         navigate('/login', { replace: true })
       }
     } catch {

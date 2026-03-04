@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AuthStatusResponseDTO } from './dtos/AuthStatusResponse.dto';
 
 @Injectable()
 export class AuthService {
@@ -14,18 +15,21 @@ export class AuthService {
             if(!result) {
                 this.logger.warn("No auth key found in the database", { context: 'AuthService' });
                 return {
-                    status: 'needs_signup'
+                    status: AuthStatusResponseDTO.NEEDS_SIGNUP
                 }
             }
             this.logger.log("Auth key found, backend is healthy", { context: 'AuthService' });
             return {
-                status: 'need_login'
+                status: AuthStatusResponseDTO.NEEDS_LOGIN
             }
 
             
         } catch (error) {
             console.error("Error in testStatus:", error)
             this.logger.error(`Error in testStatus: ${error.message}`, { context: 'AuthService' });
+            return {
+                status: AuthStatusResponseDTO.ERROR
+            }
             
         }
     }

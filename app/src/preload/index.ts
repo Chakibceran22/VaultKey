@@ -3,7 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
-  verifyMasterPassword : (password: string) => ipcRenderer.invoke('verify-master', password)
+  verifyMasterPassword: (password: string) => ipcRenderer.invoke('verify-master', password),
+  checkAuthStatus: () => ipcRenderer.invoke('auth-status'),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

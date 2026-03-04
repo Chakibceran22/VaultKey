@@ -1,9 +1,7 @@
 import { create } from 'zustand'
-import axios from 'axios'
+import { AuthStatus } from '@renderer/types'
 
-const API_URL = 'http://localhost:3000'
-
-type AppStatus = 'loading' | 'needs_signup' | 'needs_login' | 'error'
+type AppStatus = AuthStatus | 'loading'
 
 interface AppState {
   status: AppStatus
@@ -16,19 +14,21 @@ export const useAppStore = create<AppState>((set) => ({
 }))
 
 /**
- * Checks the auth status from the backend.
- * Returns 'needs_signup' if no auth key exists, 'needs_login' if one does.
- * Throws on server error.
+ * Checks the auth status from the backend via IPC.
+ * Backend returns { status: AuthStatus.NEEDS_SIGNUP | AuthStatus.NEEDS_LOGIN }
  */
-async function checkAuthStatus(): Promise<'needs_signup' | 'needs_login'> {
-  const response = await axios.get(`${API_URL}/auth/status`)
-  // Expected response: { exists: boolean }
-  return response.data.exists ? 'needs_login' : 'needs_signup'
+async function checkAuthStatus(): Promise<AuthStatus> {
+  const response = await window.api.checkAuthStatus()
+  if ('error' in response) {
+    throw new Error('Server unreachable')
+  }
+  const status = response.status as AuthStatus
+  if (status === AuthStatus.ERROR) {
+    throw new Error('Backend error')
+  }
+  return status
 }
 
-/**
- * Hook to expose the checkAuthStatus + init logic for components.
- */
 export function useAppInit() {
   const setStatus = useAppStore((s) => s.setStatus)
 
@@ -38,7 +38,7 @@ export function useAppInit() {
       setStatus(result)
       return result
     } catch {
-      setStatus('error')
+      setStatus(AuthStatus.ERROR)
       throw new Error('Server unreachable')
     }
   }

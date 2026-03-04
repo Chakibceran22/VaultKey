@@ -4,7 +4,6 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import axios from 'axios'
 
-
  const API_URL = __API_URL__
   console.log(API_URL)
 function createWindow(): void {
@@ -40,6 +39,18 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+ipcMain.handle('auth-status', async () => {
+  try {
+    console.log("Checking authentication status...")
+    const response = await axios.get(`${API_URL}/auth/status`)
+    console.log("Auth status response:", response.data)
+    return response.data
+  } catch (err){
+    console.log("im in erer ",err )
+    return { error: true }
+  }
+})
+
 ipcMain.handle('verify-master', async (_, password: string) => {
   try {
     const response = await axios.post(`${API_URL}/password/verify`, { masterPassword: password })
