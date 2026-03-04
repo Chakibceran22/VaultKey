@@ -2,6 +2,11 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import axios from 'axios'
+
+
+ const API_URL = __API_URL__
+  console.log(API_URL)
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -16,8 +21,7 @@ function createWindow(): void {
       sandbox: false
     }
   })
-  const API_URL = __API_URL__
-  console.log(API_URL)
+ 
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -37,7 +41,14 @@ function createWindow(): void {
   }
 }
 ipcMain.handle('verify-master', async (_, password: string) => {
-  console.log("Ipc working")
+  try {
+    const response = await axios.post(`${API_URL}/password/verify`, { masterPassword: password })
+    const result = await response.data
+    console.log("Master password verification result:", result)
+    return result.valid
+  } catch (error) {
+    console.log("Error verifying master password:", error)
+  }
   console.log(password)
 })
 
@@ -56,7 +67,6 @@ app.whenReady().then(() => {
   })
 
   // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
 
   createWindow()
 

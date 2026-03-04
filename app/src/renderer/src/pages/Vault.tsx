@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Plus, LogOut, ChevronRight, Globe, Key, Shield } from 'lucide-react'
-import { useAuth } from '../store/auth'
+import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
 import { mockCredentials, groupByDomain, getDomainColor, formatRelativeTime } from '../data/mock'
 

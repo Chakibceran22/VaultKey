@@ -2,19 +2,17 @@ import { Module } from '@nestjs/common';
 
 import { PrismaModule } from './prisma/prisma.module';
 
-import { InitModule } from './init/init.module';
 import { ConfigModule } from '@nestjs/config';
-import { PasswordModule } from './password/password.module';
 import { WinstonModule } from 'nest-winston';
+import { AuthModule } from './auth/auth.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
 
 @Module({
-  imports: [ InitModule,
+  imports: [ 
     ConfigModule.forRoot({
       isGlobal: true
     }),
-    PasswordModule,
     PrismaModule,
     WinstonModule.forRoot({
       transports: [
@@ -40,7 +38,8 @@ import 'winston-daily-rotate-file';
         }),
 
       ]
-    })
+    }),
+    AuthModule
   ],
   controllers: [],
   providers: [],

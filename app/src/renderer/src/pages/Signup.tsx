@@ -1,39 +1,47 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield, Eye, EyeOff, ArrowRight } from 'lucide-react'
-import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
 
-export default function Login() {
+export default function Signup() {
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const { login } = useAuth()
   const navigate = useNavigate()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
     if (!password) {
-      setError('Please enter your master password')
+      setError('Please enter a master password')
+      return
+    }
+
+    if (password.length < 8) {
+      setError('Master password must be at least 8 characters')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
       return
     }
 
     setIsLoading(true)
-    setTimeout(() => {
-      const success = login(password)
-      console.log("Login function returned:", success)
-      if (success) {
-        console.log("Login successful, verifying master password...")
-        window.api.verifyMasterPassword(password)
-        
-      } else {
-        setError('Invalid master password')
-      }
+    try {
+      // TODO: derive keys client-side with deriveKeys(password)
+      // TODO: send authKey to backend POST /auth/register
+      // On success, navigate to login
+      navigate('/login')
+    } catch {
+      setError('Failed to create master password. Is the server running?')
+    } finally {
       setIsLoading(false)
-    }, 600)
+    }
   }
 
   return (
@@ -44,7 +52,7 @@ export default function Login() {
             <Shield className="w-10 h-10 text-primary" />
           </div>
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">VaultKey</h1>
-          <p className="text-sm text-muted-foreground mt-1.5">Enter your master password to unlock</p>
+          <p className="text-sm text-muted-foreground mt-1.5">Create your master password</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -66,6 +74,23 @@ export default function Login() {
             </button>
           </div>
 
+          <div className="relative">
+            <Input
+              type={showConfirm ? 'text' : 'password'}
+              placeholder="Confirm master password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="h-12 pr-10 bg-mantle border-surface0 text-base"
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm(!showConfirm)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-overlay1 hover:text-foreground transition-colors cursor-pointer"
+            >
+              {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+
           {error && <p className="text-sm text-red">{error}</p>}
 
           <button
@@ -77,7 +102,7 @@ export default function Login() {
               <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
             ) : (
               <>
-                Unlock
+                Create Vault
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
@@ -85,7 +110,7 @@ export default function Login() {
         </form>
 
         <p className="text-xs text-surface2 text-center mt-8">
-          Your master password is never stored on disk
+          Choose a strong password — it cannot be recovered
         </p>
       </div>
     </div>

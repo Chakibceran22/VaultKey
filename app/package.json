@@ -51,13 +51,16 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@tailwindcss/vite": "^4.2.1",
+    "axios": "^1.13.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "hash-wasm": "^4.12.0",
     "lucide-react": "^0.575.0",
     "react-router-dom": "^7.13.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.1",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

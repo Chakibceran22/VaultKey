@@ -14,7 +14,7 @@ datasource db {
   provider = "postgresql"
 }
 
-model MasterPassword {
+model AuthKey {
   id Int @id @default(autoincrement())
   hash String
   createdAt DateTime @default(now())
