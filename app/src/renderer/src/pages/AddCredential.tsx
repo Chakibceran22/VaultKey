@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, RefreshCw, Eye, EyeOff, Save, Check } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { generatePassword, getPasswordStrength } from '../data/mock'
 
 export default function AddCredential() {
   const navigate = useNavigate()
-  const [domain, setDomain] = useState('')
+  const { domain } = useParams<{ domain: string }>()
+  const decodedDomain = decodeURIComponent(domain || '')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -23,7 +24,7 @@ export default function AddCredential() {
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
     setSaved(true)
-    setTimeout(() => navigate('/vault'), 800)
+    setTimeout(() => navigate(`/vault/${encodeURIComponent(decodedDomain)}`), 800)
   }
 
   return (
@@ -31,52 +32,41 @@ export default function AddCredential() {
       {/* Header */}
       <header className="shrink-0 flex items-center gap-3 px-5 py-3.5 bg-mantle border-b border-surface0">
         <button
-          onClick={() => navigate('/vault')}
+          onClick={() => navigate(`/vault/${encodeURIComponent(decodedDomain)}`)}
           className="w-8 h-8 rounded-lg bg-surface0 flex items-center justify-center text-overlay1 hover:text-foreground transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <h1 className="text-sm font-semibold text-foreground">New Credential</h1>
+        <h1 className="text-sm font-semibold text-foreground">New Credential — {decodedDomain}</h1>
       </header>
 
       {/* Form */}
       <div className="flex-1 overflow-y-auto px-5 py-5 flex justify-center">
         <form onSubmit={handleSave} className="w-full max-w-lg space-y-4">
-          {/* Site info - domain + username side by side */}
+          {/* Account info */}
           <div className="bg-mantle rounded-xl border border-surface0 p-4 space-y-4">
-            <p className="text-xs font-medium text-overlay0 uppercase tracking-wider">Site info</p>
+            <p className="text-xs font-medium text-overlay0 uppercase tracking-wider">Account info</p>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs text-subtext0">Domain</label>
-                <Input
-                  placeholder="example.com"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  className="bg-base border-surface0"
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs text-subtext0">Username</label>
+                <label className="text-xs text-subtext0">Username <span className="text-surface2">(optional)</span></label>
                 <Input
                   placeholder="john_doe"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="bg-base border-surface0"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-subtext0">Email</label>
+                <Input
+                  type="email"
+                  placeholder="john@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="bg-base border-surface0"
                   required
                 />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs text-subtext0">Email</label>
-              <Input
-                type="email"
-                placeholder="john@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="bg-base border-surface0"
-                required
-              />
             </div>
           </div>
 

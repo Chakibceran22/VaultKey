@@ -21,3 +21,25 @@ model AuthKey {
   updatedAt DateTime @default(now())
 }
 
+model Domain {
+  id Int @id @default(autoincrement())
+  name String @unique()
+  totalAccounts Int @default(0)
+
+  credentials Credential[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+}
+
+model Credential {
+  id Int @id @default(autoincrement())
+  domainId Int
+  username String?
+  email String @unique()
+  password String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+  lastTimeUsed DateTime @default(now())
+
+  domain Domain @relation(fields: [domainId], references: [id])
+}

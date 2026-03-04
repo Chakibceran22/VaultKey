@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound } from 'lucide-react'
+import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus } from 'lucide-react'
 import { mockCredentials, getDomainColor, formatRelativeTime } from '../data/mock'
 import type { Credential } from '../types'
 
@@ -20,29 +20,38 @@ export default function DomainDetail() {
   return (
     <div className="flex flex-col h-full bg-base">
       {/* Header */}
-      <header className="shrink-0 flex items-center gap-3 px-5 py-3.5 bg-mantle border-b border-surface0">
-        <button
-          onClick={() => navigate('/vault')}
-          className="w-8 h-8 rounded-lg bg-surface0 flex items-center justify-center text-overlay1 hover:text-foreground transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        <div className="flex items-center gap-2.5">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
-            style={{ backgroundColor: color, color: '#232634' }}
+      <header className="shrink-0 flex items-center justify-between px-5 py-3.5 bg-mantle border-b border-surface0">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/vault')}
+            className="w-8 h-8 rounded-lg bg-surface0 flex items-center justify-center text-overlay1 hover:text-foreground transition-colors cursor-pointer"
           >
-            {decodedDomain[0]?.toUpperCase()}
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold text-foreground leading-tight">
-              {decodedDomain}
-            </h1>
-            <p className="text-xs text-overlay0">
-              {credentials.length} credential{credentials.length !== 1 ? 's' : ''}
-            </p>
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
+              style={{ backgroundColor: color, color: '#232634' }}
+            >
+              {decodedDomain[0]?.toUpperCase()}
+            </div>
+            <div>
+              <h1 className="text-sm font-semibold text-foreground leading-tight">
+                {decodedDomain}
+              </h1>
+              <p className="text-xs text-overlay0">
+                {credentials.length} credential{credentials.length !== 1 ? 's' : ''}
+              </p>
+            </div>
           </div>
         </div>
+        <button
+          onClick={() => navigate(`/vault/${encodeURIComponent(decodedDomain)}/add`)}
+          className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+          title="Add credential"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
       </header>
 
       {/* Credential Cards */}

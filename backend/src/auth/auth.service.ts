@@ -44,11 +44,11 @@ export class AuthService {
                 }
             })
             this.logger.log("Auth key registered successfully", { context: 'AuthService' });
-            return { status: 'success' }
+            return { success: true }
 
         } catch (error) {
             return {
-                status: false
+                success: false
             }
         }
 
@@ -60,7 +60,10 @@ export class AuthService {
             const dbKey = await this.prisma.authKey.findFirst();
             if (!dbKey) {
                 this.logger.warn("No auth key found in the database during verification", { context: 'AuthService' });
-                return false;
+                return {
+                    valid: false,
+                    token: null
+                }
             }
             const isValid = key === dbKey.hash;
             this.logger.log(`Auth key verification result: ${isValid}`, { context: 'AuthService' });

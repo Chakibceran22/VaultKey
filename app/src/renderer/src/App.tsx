@@ -9,6 +9,7 @@ import Signup from './pages/Signup'
 import Vault from './pages/Vault'
 import DomainDetail from './pages/DomainDetail'
 import AddCredential from './pages/AddCredential'
+import AddDomain from './pages/AddDomain'
 import Error from './pages/Error'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -76,7 +77,15 @@ function AppRoutes() {
         }
       />
       <Route
-        path="/add"
+        path="/add-domain"
+        element={
+          <ProtectedRoute>
+            <AddDomain />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vault/:domain/add"
         element={
           <ProtectedRoute>
             <AddCredential />

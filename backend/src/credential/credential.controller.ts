@@ -2,7 +2,7 @@ import { Controller, Post, UseGuards } from '@nestjs/common';
 import { AuthGuard } from 'src/auth/guards/auth.guard';
 
 @Controller('password')
-export class PasswordController {
+export class CredentialController {
     @UseGuards(AuthGuard)
     @Post('test')
     async testPasswordEndpoint() {

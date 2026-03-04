@@ -38,9 +38,9 @@ export default function Vault() {
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={() => navigate('/add')}
+            onClick={() => navigate('/add-domain')}
             className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary/20 transition-colors cursor-pointer"
-            title="Add credential"
+            title="Add domain"
           >
             <Plus className="w-4 h-4" />
           </button>

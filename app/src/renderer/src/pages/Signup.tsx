@@ -35,15 +35,16 @@ export default function Signup() {
     await new Promise((r) => setTimeout(r, 50))
     try {
       const derrivedPassword = await deriveKeys(password)
-      console.log("Derived keys:", derrivedPassword)
       const response = await window.api.registerAuthKey(derrivedPassword.authKey)
-      console.log("Auth key registration response:", response)
+      if(!response.success){
+        toast.error('Failed to create master password. Is the server running?')
+        return
+      } 
 
       
       toast.success('Master password created successfully!')
-      // TODO: send authKey to backend POST /auth/register
-      // On success, navigate to login
-      // navigate('/login')
+      navigate('/login')
+     
     } catch (err){
       console.log("im here for some reaon")
       toast.error('Failed to create master password. Is the server running?')

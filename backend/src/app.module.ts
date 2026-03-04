@@ -6,9 +6,10 @@ import { ConfigModule } from '@nestjs/config';
 import { ConfigService } from '@nestjs/config';
 import { WinstonModule } from 'nest-winston';
 import { AuthModule } from './auth/auth.module';
-import { PasswordService } from './password/password.service';
-import { PasswordController } from './password/password.controller';
-import { PasswordModule } from './password/password.module';
+import { CredentialService } from './credential/credential.service';
+import { CredentialController } from './credential/credential.controller';
+import { PasswordModule } from './credential/credential.module';
+import { DomainModule } from './domain/domain.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
 
@@ -56,9 +57,10 @@ import 'winston-daily-rotate-file';
       }
     }),
     AuthModule,
-    PasswordModule
+    PasswordModule,
+    DomainModule
   ],
-  controllers: [PasswordController],
-  providers: [PasswordService],
+  controllers: [CredentialController],
+  providers: [CredentialService],
 })
 export class AppModule {}
