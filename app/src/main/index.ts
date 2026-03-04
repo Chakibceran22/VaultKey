@@ -62,9 +62,8 @@ ipcMain.handle('register-auth-key', async (_, authKey: string) => {
 })
 ipcMain.handle('verify-master', async (_, password: string) => {
   try {
-    const response = await axios.post(`${API_URL}/password/verify`, { masterPassword: password })
+    const response = await axios.post(`${API_URL}/auth/verify`, { authKey: password })
     const result = await response.data
-    console.log("Master password verification result:", result)
     return result.valid
   } catch (error) {
     console.log("Error verifying master password:", error)

@@ -16,4 +16,9 @@ export class AuthController {
     async registerAuthKey(@Body() authKeyDTO: AuthKeyDTO) {
         return await this.authService.registerAuthKey(authKeyDTO);
     }
+
+    @Post('verify')
+    async verifyMasterPassword(@Body() masterPassword: AuthKeyDTO) {
+        return await this.authService.verifyAuthKey(masterPassword);
+    }
 }

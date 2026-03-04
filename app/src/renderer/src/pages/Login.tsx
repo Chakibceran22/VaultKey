@@ -4,6 +4,7 @@ import { Shield, Eye, EyeOff, ArrowRight } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
 import { toast } from 'sonner'
+import { deriveKeys } from '@renderer/lib/crypto'
 
 export default function Login() {
   const [password, setPassword] = useState('')
@@ -12,7 +13,7 @@ export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!password) {
       toast.error('Please enter your master password')
@@ -20,18 +21,26 @@ export default function Login() {
     }
 
     setIsLoading(true)
-    setTimeout(() => {
-      const success = login(password)
-      console.log("Login function returned:", success)
-      if (success) {
-        console.log("Login successful, verifying master password...")
-        window.api.verifyMasterPassword(password)
+    await new Promise((r) => setTimeout(r, 50))
 
-      } else {
-        toast.error('Invalid master password')
+    try {
+      const derivedKeys = await deriveKeys(password) 
+      console.log(derivedKeys)
+      const result = await window.api.verifyMasterPassword(derivedKeys.authKey)
+      if (!result) {
+        toast.error("Wrong Password")
+        return
       }
+      toast.success("Login successful!")
+      
+
+      
+    } catch (error) {
+      console.log("Error loggng in ")
+      toast.error('Failed to verify master password. Is the server running?')
+    }finally{
       setIsLoading(false)
-    }, 600)
+    }
   }
 
   return (
@@ -63,6 +72,7 @@ export default function Login() {
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+
 
           <button
             type="submit"
