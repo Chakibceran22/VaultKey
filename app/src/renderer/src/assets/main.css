@@ -103,3 +103,26 @@
     color: #c6d0f5;
   }
 }
+
+/* Sonner toast overrides */
+[data-sonner-toast] {
+  --normal-bg: #292c3c !important;
+  --normal-border: #414559 !important;
+  --normal-text: #c6d0f5 !important;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif !important;
+  font-size: 13px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+  --normal-bg: rgba(231, 130, 132, 0.08) !important;
+  --normal-border: rgba(231, 130, 132, 0.25) !important;
+  --normal-text: #e78284 !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+  --normal-bg: rgba(202, 158, 230, 0.08) !important;
+  --normal-border: rgba(202, 158, 230, 0.25) !important;
+  --normal-text: #ca9ee6 !important;
+}

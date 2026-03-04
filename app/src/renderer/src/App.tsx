@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Toaster } from 'sonner'
 import { useAuth } from './store/auth'
 import { useAppStore, useAppInit } from './store/app'
 import { AuthStatus } from './types'
@@ -92,6 +93,11 @@ export default function App() {
   return (
     <HashRouter>
       <div className="h-full w-full bg-base text-foreground">
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          icons={{ success: undefined, error: undefined }}
+        />
         <AppRoutes />
       </div>
     </HashRouter>

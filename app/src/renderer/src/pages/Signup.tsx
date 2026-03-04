@@ -2,43 +2,52 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield, Eye, EyeOff, ArrowRight } from 'lucide-react'
 import { Input } from '../components/ui/input'
-
+import { deriveKeys } from '@renderer/lib/crypto'
+import { toast } from 'sonner'
 export default function Signup() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
-  const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError('')
 
     if (!password) {
-      setError('Please enter a master password')
+      toast.error('Please enter a master password')
       return
     }
 
     if (password.length < 8) {
-      setError('Master password must be at least 8 characters')
+      toast.error('Master password must be at least 8 characters')
       return
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match')
+      toast.error('Passwords do not match')
       return
     }
 
     setIsLoading(true)
+    // Let React flush the loading state before heavy crypto work
+    await new Promise((r) => setTimeout(r, 50))
     try {
-      // TODO: derive keys client-side with deriveKeys(password)
+      const derrivedPassword = await deriveKeys(password)
+      console.log("Derived keys:", derrivedPassword)
+      const response = await window.api.registerAuthKey(derrivedPassword.authKey)
+      console.log("Auth key registration response:", response)
+
+      
+      toast.success('Master password created successfully!')
       // TODO: send authKey to backend POST /auth/register
       // On success, navigate to login
-      navigate('/login')
-    } catch {
-      setError('Failed to create master password. Is the server running?')
+      // navigate('/login')
+    } catch (err){
+      console.log("im here for some reaon")
+      toast.error('Failed to create master password. Is the server running?')
+      console.error("Error during signup:", err )
     } finally {
       setIsLoading(false)
     }
@@ -90,8 +99,6 @@ export default function Signup() {
               {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
-          {error && <p className="text-sm text-red">{error}</p>}
 
           <button
             type="submit"

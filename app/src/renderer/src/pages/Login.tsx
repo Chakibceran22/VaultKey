@@ -3,21 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { Shield, Eye, EyeOff, ArrowRight } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
+import { toast } from 'sonner'
 
 export default function Login() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const { login } = useAuth()
   const navigate = useNavigate()
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    setError('')
-
     if (!password) {
-      setError('Please enter your master password')
+      toast.error('Please enter your master password')
       return
     }
 
@@ -28,9 +26,9 @@ export default function Login() {
       if (success) {
         console.log("Login successful, verifying master password...")
         window.api.verifyMasterPassword(password)
-        
+
       } else {
-        setError('Invalid master password')
+        toast.error('Invalid master password')
       }
       setIsLoading(false)
     }, 600)
@@ -65,8 +63,6 @@ export default function Login() {
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
-          {error && <p className="text-sm text-red">{error}</p>}
 
           <button
             type="submit"

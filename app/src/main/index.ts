@@ -51,6 +51,15 @@ ipcMain.handle('auth-status', async () => {
   }
 })
 
+ipcMain.handle('register-auth-key', async (_, authKey: string) => {
+  try {
+    const response = await axios.post(`${API_URL}/auth/register`, { authKey })
+    return response.data
+  } catch (error) {
+    console.log("Error registering auth key:", error)
+    throw error
+  }
+})
 ipcMain.handle('verify-master', async (_, password: string) => {
   try {
     const response = await axios.post(`${API_URL}/password/verify`, { masterPassword: password })
