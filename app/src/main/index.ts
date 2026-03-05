@@ -4,15 +4,15 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import axios from 'axios'
 
- const API_URL = __API_URL__
-  console.log(API_URL)
+const API_URL = __API_URL__
+console.log(API_URL)
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 850,
     show: false,
-    title:"ValultKey",
+    title: "ValultKey",
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -20,7 +20,7 @@ function createWindow(): void {
       sandbox: false
     }
   })
- 
+
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -45,8 +45,8 @@ ipcMain.handle('auth-status', async () => {
     const response = await axios.get(`${API_URL}/auth/status`)
     console.log("Auth status response:", response.data)
     return response.data
-  } catch (err){
-    console.log("im in erer ",err )
+  } catch (err) {
+    console.log("im in erer ", err)
     return { error: true }
   }
 })
@@ -71,11 +71,11 @@ ipcMain.handle('verify-master', async (_, password: string) => {
   console.log(password)
 })
 
-ipcMain.handle('fetch-domains', async (_, token :string) => {
+ipcMain.handle('fetch-domains', async (_, token: string) => {
   try {
     const response = await axios.get(`${API_URL}/domain/fetch`, {
       headers: {
-        Authorization : `Bearer ${token}`
+        Authorization: `Bearer ${token}`
       }
     })
     return response.data
@@ -88,14 +88,14 @@ ipcMain.handle('fetch-domains', async (_, token :string) => {
 ipcMain.handle('register-domain', async (_, token: string, domainName: string) => {
   try {
     const response = await axios.post(`${API_URL}/domain/register`, { name: domainName }, {
-      headers:{
-        Authorization : `Bearer ${token}`
+      headers: {
+        Authorization: `Bearer ${token}`
       }
     })
     return response.data
-  } catch (error: any ) {
-    console.log("Error registering domain:", error)
-    throw new Error('Failed to register domain')
+  } catch (error: any) {
+    console.log("message:", error.response?.data?.message) // check this
+    throw new Error(error.response?.data?.message || 'Failed to register domain')
   }
 })
 

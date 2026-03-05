@@ -23,7 +23,7 @@ class DomainService {
 
         } catch (error: any) {
             console.log("Error registering domain:", error)
-            throw new Error('Failed to register domain')
+            throw new Error(error.message || 'Failed to register domain')
         }
     }
 }

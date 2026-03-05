@@ -34,7 +34,7 @@ export default function Vault() {
     return domains.filter((d) => d.name.toLowerCase().includes(q))
   }, [search, domains])
 
-  const totalCredentials = domains.reduce((sum, d) => sum + d.totalAccounts, 0)
+  const totalCredentials = domains.reduce((sum, d) => sum + d._count.credentials, 0)
 
   return (
     <div className="flex flex-col h-full bg-base">

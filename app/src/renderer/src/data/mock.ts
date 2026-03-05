@@ -120,27 +120,7 @@ export const mockCredentials: Credential[] = [
   }
 ]
 
-export function groupByDomain(credentials: Credential[]): DomainGroup[] {
-  const grouped = credentials.reduce<Record<string, Credential[]>>((acc, cred) => {
-    if (!acc[cred.domain]) {
-      acc[cred.domain] = []
-    }
-    acc[cred.domain].push(cred)
-    return acc
-  }, {})
 
-  return Object.entries(grouped)
-    .map(([domain, creds]) => ({
-      domain,
-      credentials: creds,
-      totalAccounts: creds.length,
-      lastUsed: creds.reduce(
-        (latest, c) => (new Date(c.lastUsed) > new Date(latest) ? c.lastUsed : latest),
-        creds[0].lastUsed
-      )
-    }))
-    .sort((a, b) => new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime())
-}
 
 const ACCENT_COLORS = [
   '#8caaee',

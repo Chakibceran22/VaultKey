@@ -5,38 +5,44 @@ import { Input } from '../components/ui/input'
 import { toast } from 'sonner'
 import { domainService } from '@renderer/lib/domainsService'
 import { useAuth } from '@renderer/store/auth'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 export default function AddDomain() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
   const [saved, setSaved] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const {token} = useAuth()
+  const { token } = useAuth()
+  const queryClient = useQueryClient()
 
-  const handleSave = async(e: React.FormEvent) => {
+  const { mutate: registerDomain, isPending: isLoading } = useMutation({
+    mutationFn: (name: string) => domainService.registerDomain(token!, name),
+    onSuccess: (result) => {
+      if (result) {
+        setSaved(true);
+        toast.success("Domain added successfully!")
+        queryClient.invalidateQueries({ queryKey: ['domains'] })
+      }
+      else {
+        toast.error('Failed to add domain. This Domain Already Exists.')
+      }
+
+    },
+    onError: (error: any) => {
+      console.log("Error saving domain:", error.message)
+      toast.error(error.message)
+    },
+
+  })
+
+
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
-    if(!token) {
+    if (!token) {
       toast.error('You must be logged in to add a domain')
       return
     }
-    setIsLoading(true)
-    try {
-      const result = await domainService.registerDomain(token, name)
-      if(result) {
-        setSaved(true)
-        toast.success('Domain added successfully!')
-        setTimeout(() => navigate('/vault'), 800)
-        return
-      }
-      toast.error('Failed to add domain. This Domain Already Exists.')
-    } catch (error) {
-      console.log("Error saving domain:", error)
-      toast.error('Failed to add domain. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
+    registerDomain(name)
   }
-
   return (
     <div className="flex flex-col h-full bg-base">
       {/* Header */}

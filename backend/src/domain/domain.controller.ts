@@ -19,4 +19,5 @@ export class DomainController {
     async fetchDomains() {
         return await this.domainService.fetchDomains();
     }
+
 }

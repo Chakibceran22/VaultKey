@@ -1,6 +1,6 @@
 import { IsInt, IsOptional, IsString } from "class-validator";
 
-export class CredentialsDTO {
+export class CreateCredentialsDTO {
     @IsString()
     @IsOptional()
     username: string;
