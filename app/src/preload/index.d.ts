@@ -14,8 +14,11 @@ declare global {
       registerAuthKey: (authKey: string) => Promise<{success: boolean}>
       fetchDomains: (token: string) => Promise<{ domains: Domain[] } | { error: true }>
       registerDomain: (token: string, domainName: string) => Promise<{ success: boolean } | { error: true }>
+      deleteDomain: (token : string, domainId: number) => Promise<{ success: boolean } | { error: true }>
       fetchCredentials: (token: string, domainId: number) => Promise<{ credentials: CredentialResponse[] } | { error: true }>
       createCredential: (token: string, credentialDTO: CredentialDTO) => Promise<{ success: boolean } | { error: true }>
+      deleteCredential: (token:string, credentialId: number) => Promise<{ success: boolean } | { error: true }>
+      updateCredential: (token: string, credentialId: number, updatedFields: any) => Promise<{ success: boolean } | { error: true }>
     }
   }
 }

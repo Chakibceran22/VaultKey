@@ -4,6 +4,7 @@ import { CreateCredentialsDTO } from './dtos/Credentials.dto';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { Prisma } from 'generated/prisma/client'  // ✅ server client, not browser
 import { DomainIDDTO } from './dtos/domainid.dto';
+import { UpdateCredentialDTO } from './dtos/UpdateCredential.dto';
 
 @Injectable()
 export class CredentialService {
@@ -45,7 +46,40 @@ export class CredentialService {
             return { credentials }
 
         } catch (error) {
+            this.logger.error(`Error in fetchCredentials: ${error.message}`, { context: 'CredentialService' });
             throw new InternalServerErrorException('Failed to fetch credentials')
+        }
+    }
+
+    async deleteCredential(credentialId: number) {
+        try {
+            const deleted = await this.prisma.credential.delete({
+                where: { id: credentialId }
+            })
+            return { success: !!deleted }
+        } catch (error) {
+            this.logger.error(`Error in deleteCredential: ${error.message}`, { context: 'CredentialService' });
+            throw new InternalServerErrorException('Failed to delete credential')
+        }
+    }
+
+
+    async updateCredential(credentialId: number, updateCredentialDTO: UpdateCredentialDTO) {
+        try {
+            const {username, email, password} = updateCredentialDTO
+            const result = await this.prisma.credential.update({
+                where: { id: credentialId },
+                data: {
+                    ...(username !== undefined && { username }),
+                    ...(email !== undefined && { email }),
+                    ...(password !== undefined && { password })
+                }
+            })
+            return { success: !!result }
+            
+        } catch (error) {
+            this.logger.error(`Error in updateCredential: ${error.message}`, { context: 'CredentialService' });
+            throw new InternalServerErrorException('Failed to update credential')
         }
     }
 }

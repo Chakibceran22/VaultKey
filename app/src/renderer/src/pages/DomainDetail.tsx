@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus, Loader2 } from 'lucide-react'
+import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus, Loader2, Trash2, Pencil } from 'lucide-react'
 import { getDomainColor } from '../data/mock'
 import { useAuth } from '@renderer/store/auth'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { credentialsService, type CredentialResponse } from '@renderer/lib/credentialsService'
 
 export default function DomainDetail() {
@@ -72,7 +72,7 @@ export default function DomainDetail() {
           </div>
         )}
         {!isLoading && !isError && credentials.map((cred) => (
-          <CredentialCard key={cred.id} credential={cred} />
+          <CredentialCard key={cred.id} credential={cred} domain={decodedDomain} domainId={domainId} token={token} />
         ))}
         {!isLoading && !isError && credentials.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -84,9 +84,18 @@ export default function DomainDetail() {
   )
 }
 
-function CredentialCard({ credential }: { credential: CredentialResponse }) {
+function CredentialCard({ credential, domain, domainId, token }: { credential: CredentialResponse; domain: string; domainId?: number; token: string | null }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [showPassword, setShowPassword] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
+
+  const { mutate: deleteCredential, isPending: isDeleting } = useMutation({
+    mutationFn: (credentialId: number) => credentialsService.deleteCredential(token!, credentialId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials', domainId] })
+    },
+  })
 
   const copyToClipboard = async (text: string, field: string) => {
     await navigator.clipboard.writeText(text)
@@ -123,7 +132,7 @@ function CredentialCard({ credential }: { credential: CredentialResponse }) {
       </div>
 
       {/* Password */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <KeyRound className="w-3.5 h-3.5 text-overlay0 shrink-0" />
           <span className="text-sm font-mono text-subtext0 truncate">
@@ -144,6 +153,25 @@ function CredentialCard({ credential }: { credential: CredentialResponse }) {
             copied={copiedField === `pass-${credential.id}`}
           />
         </div>
+      </div>
+
+      {/* Actions */}
+      <div className="pt-2.5 border-t border-surface0 flex justify-end gap-1">
+        <button
+          onClick={() => navigate(`/vault/${encodeURIComponent(domain)}/edit/${credential.id}`, { state: { domainId, credential } })}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-overlay0 hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+          title="Edit credential"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => deleteCredential(credential.id)}
+          disabled={isDeleting}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-overlay0 hover:text-red hover:bg-red/10 transition-colors cursor-pointer disabled:opacity-50"
+          title="Delete credential"
+        >
+          {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        </button>
       </div>
     </div>
   )

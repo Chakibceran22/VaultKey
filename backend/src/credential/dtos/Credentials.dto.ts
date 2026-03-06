@@ -1,11 +1,11 @@
-import { IsInt, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsInt, IsOptional, IsString } from "class-validator";
 
 export class CreateCredentialsDTO {
     @IsString()
     @IsOptional()
     username: string;
 
-    @IsString()
+    @IsEmail()
     email: string;
 
     @IsString()

@@ -26,6 +26,19 @@ class DomainService {
             throw new Error(error.message || 'Failed to register domain')
         }
     }
+    async deleteDomain(token: string, domainId: number): Promise<boolean> {
+        try {
+            const result = await window.api.deleteDomain(token, domainId)
+            if( 'error' in result) {
+                throw new Error('Failed to delete domain')
+            }
+            return result.success
+            
+        } catch (error) {
+            console.log("Error deleting domain:", error)
+            throw new Error('Failed to delete domain')
+        }
+    }
 }
 
 

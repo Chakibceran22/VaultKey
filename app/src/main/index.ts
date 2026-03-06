@@ -98,6 +98,20 @@ ipcMain.handle('register-domain', async (_, token: string, domainName: string) =
     throw new Error(error.response?.data?.message || 'Failed to register domain')
   }
 })
+ipcMain.handle('delete-domain', async (_, token: string, domainId: number) => {
+  try {
+    console.log("Deleting domain with ID:", domainId)
+    const response  = await axios.delete(`${API_URL}/domain/delete/${domainId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    return response.data
+  } catch (error) {
+    console.log("Error deleting domain:", error)
+    throw new Error('Failed to delete domain')
+  }
+})
 
 ipcMain.handle('fetch-credentials', async (_, token: string, domainId: number) => {
   try {
@@ -125,6 +139,34 @@ ipcMain.handle('create-credential', async (_, token: string, credentialDTO: any)
     return response.data
   } catch (error: any) {
     throw new Error(error.response?.data?.message || 'Failed to create credential')
+  }
+})
+
+ipcMain.handle('delete-credential', async (_, token: string, credentialId: number) => {
+  try {
+    const reponse = await axios.delete(`${API_URL}/credential/delete/${credentialId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    return reponse.data
+  } catch (error) {
+    console.log("Error deleting credential:", error)
+    throw new Error('Failed to delete credential')
+  }
+})
+
+ipcMain.handle('update-credential', async (_, token: string, credentialId: number, updatedFields: any) => {
+  try {
+    const response = await axios.put(`${API_URL}/credential/update/${credentialId}`, { ...updatedFields }, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    return response.data
+  } catch (error: any ) {
+    console.log("Error updating credential:", error.response?.data || error.message)
+    throw new Error('Failed to update credential')
   }
 })
 

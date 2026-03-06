@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, LogOut, ChevronRight, Globe, Key, Shield } from 'lucide-react'
+import { Search, Plus, LogOut, Globe, Key, Shield, Trash2, Loader2 } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
 import { getDomainColor, formatRelativeTime } from '../data/mock'
 import { domainService } from '@renderer/lib/domainsService'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 interface Domain {
   id: number
@@ -22,10 +23,23 @@ export default function Vault() {
   const { logout, token } = useAuth()
   const navigate = useNavigate()
 
+  const queryClient = useQueryClient()
+
   const { data: domains = [] } = useQuery<Domain[]>({
     queryKey: ['domains'],
     queryFn: () => domainService.getDomains(token!),
     enabled: !!token,
+  })
+
+  const { mutate: deleteDomain, isPending: isDeleting, variables: deletingId } = useMutation({
+    mutationFn: (domainId: number) => domainService.deleteDomain(token!, domainId),
+    onSuccess: () => {
+      toast.success('Domain deleted successfully')
+      queryClient.invalidateQueries({ queryKey: ['domains'] })
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to delete domain')
+    }
   })
 
   const filtered = useMemo(() => {
@@ -96,11 +110,12 @@ export default function Vault() {
           <div className="grid grid-cols-2 gap-2.5">
             {filtered.map((domain) => {
               const color = getDomainColor(domain.name)
+              const isDeletingThis = isDeleting && deletingId === domain.id
               return (
-                <button
+                <div
                   key={domain.id}
-                  onClick={() => navigate(`/vault/${encodeURIComponent(domain.name)}`, { state: { domainId: domain.id } })}
                   className="group flex flex-col p-3.5 bg-mantle rounded-xl border border-surface0 hover:border-surface1 transition-all text-left cursor-pointer"
+                  onClick={() => navigate(`/vault/${encodeURIComponent(domain.name)}`, { state: { domainId: domain.id } })}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div
@@ -109,7 +124,17 @@ export default function Vault() {
                     >
                       {domain.name[0].toUpperCase()}
                     </div>
-                    <ChevronRight className="w-4 h-4 text-surface2 opacity-0 group-hover:opacity-100 transition-opacity mt-1" />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteDomain(domain.id)
+                      }}
+                      disabled={isDeletingThis}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-surface2 opacity-0 group-hover:opacity-100 hover:text-red hover:bg-red/10 transition-all cursor-pointer disabled:opacity-50"
+                      title="Delete domain"
+                    >
+                      {isDeletingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
                   <p className="text-sm font-medium text-foreground truncate">{domain.name}</p>
                   <div className="flex items-center gap-1.5 mt-1">
@@ -121,7 +146,7 @@ export default function Vault() {
                       {formatRelativeTime(domain.updatedAt)}
                     </span>
                   </div>
-                </button>
+                </div>
               )
             })}
           </div>

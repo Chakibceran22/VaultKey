@@ -12,6 +12,7 @@ import Vault from './pages/Vault'
 import DomainDetail from './pages/DomainDetail'
 import AddCredential from './pages/AddCredential'
 import AddDomain from './pages/AddDomain'
+import EditCredential from './pages/EditCredential'
 import Error from './pages/Error'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -91,6 +92,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <AddCredential />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/vault/:domain/edit/:credentialId"
+        element={
+          <ProtectedRoute>
+            <EditCredential />
           </ProtectedRoute>
         }
       />

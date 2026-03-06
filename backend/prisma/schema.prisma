@@ -33,11 +33,13 @@ model Credential {
   id Int @id @default(autoincrement())
   domainId Int
   username String?
-  email String @unique()
+  email String 
   password String
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
   lastTimeUsed DateTime @default(now())
 
-  domain Domain @relation(fields: [domainId], references: [id])
+  domain Domain @relation(fields: [domainId], references: [id] , onDelete: Cascade, onUpdate: Cascade)
+  @@unique([email, domainId])
+
 }

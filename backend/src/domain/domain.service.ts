@@ -47,4 +47,17 @@ export class DomainService {
             throw new InternalServerErrorException('Failed to fetch domains');
         }
     }
+
+
+    async deleteDomain(domainId: number) {
+        try {
+            const deleted = await this.prisma.domain.delete({
+                where: { id: domainId }
+            })
+            return { success: !!deleted }
+        } catch (error) {
+            this.logger.error(`Error in deleteDomain: ${error.message}`, { context: 'DomainService' });
+            throw new InternalServerErrorException('Failed to delete domain');
+        }
+    }
 }

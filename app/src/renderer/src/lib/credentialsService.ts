@@ -45,6 +45,33 @@ class CredentialsService {
       throw new Error(error.message || 'Failed to create credential')
     }
   }
+  async deleteCredential(token: string, credentialId: number): Promise<boolean> {
+    try {
+      const result = await window.api.deleteCredential(token,   credentialId)
+      if( 'error' in result) {
+        throw new Error('Failed to delete credential')
+      }
+      return result.success
+    } catch (error) {
+      console.log("Error deleting credential:", error)
+      throw new Error('Failed to delete credential')
+    }
+    
+  }
+
+  async updateCredential(token: string, credentialId: number, updatedFields: Partial<CredentialDTO>, encryptionKey: string): Promise<boolean> {
+    try {
+      const encryptedPassword = updatedFields.password ? await encrypt(updatedFields.password, encryptionKey) : undefined
+      const result = await window.api.updateCredential(token, credentialId, { ...updatedFields, ...(encryptedPassword && { password: encryptedPassword }) })
+      if( 'error' in result) {
+        throw new Error('Failed to update credential')
+      }
+      return result.success
+    } catch (error) {
+      console.log("Error updating credential:", error)
+      throw new Error('Failed to update credential')
+    }
+  }
 }
 
 export const credentialsService = new CredentialsService()
