@@ -7,7 +7,8 @@ const api = {
   checkAuthStatus: () => ipcRenderer.invoke('auth-status'),
   registerAuthKey: (authKey: string) => ipcRenderer.invoke('register-auth-key', authKey),
   fetchDomains: (token: string) => ipcRenderer.invoke('fetch-domains', token),
-  registerDomain: (token: string, domainName: string) => ipcRenderer.invoke('register-domain', token, domainName)
+  registerDomain: (token: string, domainName: string) => ipcRenderer.invoke('register-domain', token, domainName),
+  fetchCredentials: (token: string, domainId: number) => ipcRenderer.invoke('fetch-credentials', token, domainId)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

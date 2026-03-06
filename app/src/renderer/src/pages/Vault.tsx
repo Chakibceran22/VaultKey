@@ -99,7 +99,7 @@ export default function Vault() {
               return (
                 <button
                   key={domain.id}
-                  onClick={() => navigate(`/vault/${encodeURIComponent(domain.name)}`)}
+                  onClick={() => navigate(`/vault/${encodeURIComponent(domain.name)}`, { state: { domainId: domain.id } })}
                   className="group flex flex-col p-3.5 bg-mantle rounded-xl border border-surface0 hover:border-surface1 transition-all text-left cursor-pointer"
                 >
                   <div className="flex items-start justify-between mb-3">

@@ -1,19 +1,24 @@
-import { useState, useMemo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus } from 'lucide-react'
-import { mockCredentials, getDomainColor, formatRelativeTime } from '../data/mock'
-import type { Credential } from '../types'
+import { useState } from 'react'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { ArrowLeft, Copy, Eye, EyeOff, Check, User, Mail, KeyRound, Plus, Loader2 } from 'lucide-react'
+import { getDomainColor } from '../data/mock'
+import { useAuth } from '@renderer/store/auth'
+import { useQuery } from '@tanstack/react-query'
+import { credentialsService, type CredentialResponse } from '@renderer/lib/credentialsService'
 
 export default function DomainDetail() {
   const { domain } = useParams<{ domain: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const { token } = useAuth()
   const decodedDomain = decodeURIComponent(domain || '')
+  const domainId = (location.state as { domainId?: number })?.domainId
 
-
-  const credentials = useMemo(
-    () => mockCredentials.filter((c) => c.domain === decodedDomain),
-    [decodedDomain]
-  )
+  const { data: credentials = [], isLoading, isError } = useQuery<CredentialResponse[]>({
+    queryKey: ['credentials', domainId],
+    queryFn: () => credentialsService.getCredentials(token!, domainId!),
+    enabled: !!token && !!domainId,
+  })
 
   const color = getDomainColor(decodedDomain)
 
@@ -56,15 +61,30 @@ export default function DomainDetail() {
 
       {/* Credential Cards */}
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2.5">
-        {credentials.map((cred) => (
+        {isLoading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 text-overlay0 animate-spin" />
+          </div>
+        )}
+        {isError && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-sm text-red">Failed to load credentials</p>
+          </div>
+        )}
+        {!isLoading && !isError && credentials.map((cred) => (
           <CredentialCard key={cred.id} credential={cred} />
         ))}
+        {!isLoading && !isError && credentials.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-sm text-overlay0">No credentials yet</p>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function CredentialCard({ credential }: { credential: Credential }) {
+function CredentialCard({ credential }: { credential: CredentialResponse }) {
   const [showPassword, setShowPassword] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
@@ -77,16 +97,18 @@ function CredentialCard({ credential }: { credential: Credential }) {
   return (
     <div className="p-4 bg-mantle rounded-xl border border-surface0">
       {/* Username */}
-      <div className="flex items-center justify-between mb-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <User className="w-3.5 h-3.5 text-overlay0 shrink-0" />
-          <span className="text-sm text-foreground truncate">{credential.username}</span>
+      {credential.username && (
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <User className="w-3.5 h-3.5 text-overlay0 shrink-0" />
+            <span className="text-sm text-foreground truncate">{credential.username}</span>
+          </div>
+          <CopyButton
+            onClick={() => copyToClipboard(credential.username, `user-${credential.id}`)}
+            copied={copiedField === `user-${credential.id}`}
+          />
         </div>
-        <CopyButton
-          onClick={() => copyToClipboard(credential.username, `user-${credential.id}`)}
-          copied={copiedField === `user-${credential.id}`}
-        />
-      </div>
+      )}
 
       {/* Email */}
       <div className="flex items-center justify-between mb-2.5">
@@ -101,7 +123,7 @@ function CredentialCard({ credential }: { credential: Credential }) {
       </div>
 
       {/* Password */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5 min-w-0">
           <KeyRound className="w-3.5 h-3.5 text-overlay0 shrink-0" />
           <span className="text-sm font-mono text-subtext0 truncate">
@@ -122,13 +144,6 @@ function CredentialCard({ credential }: { credential: Credential }) {
             copied={copiedField === `pass-${credential.id}`}
           />
         </div>
-      </div>
-
-      {/* Footer */}
-      <div className="pt-2.5 border-t border-surface0">
-        <p className="text-xs text-surface2">
-          Last used {formatRelativeTime(credential.lastUsed)}
-        </p>
       </div>
     </div>
   )

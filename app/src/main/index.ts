@@ -99,6 +99,22 @@ ipcMain.handle('register-domain', async (_, token: string, domainName: string) =
   }
 })
 
+ipcMain.handle('fetch-credentials', async (_, token: string, domainId: number) => {
+  try {
+    const credentials = await axios.get(`${API_URL}/credential/${domainId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    
+    return credentials.data
+
+  } catch (error) {
+    console.log("Error fetching credentials:", error)
+    throw new Error('Failed to fetch credentials')
+  }
+})
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.

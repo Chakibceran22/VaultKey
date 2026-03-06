@@ -15,6 +15,14 @@ export interface Credential {
   lastUsed: string
 }
 
+export interface CredentialDTO {
+  domainId: number,
+  username?: string,
+  emai: string,
+  password: string,
+  
+}
+
 export interface DomainGroup {
   domain: string
   credentials: Credential[]

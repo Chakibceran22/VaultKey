@@ -3,6 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCredentialsDTO } from './dtos/Credentials.dto';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { Prisma } from 'generated/prisma/client'  // ✅ server client, not browser
+import { DomainIDDTO } from './dtos/domainid.dto';
 
 @Injectable()
 export class CredentialService {
@@ -30,6 +31,21 @@ export class CredentialService {
 
             this.logger.error(`Error in createCredential: ${error.message}`, { context: 'CredentialService' });
             throw new InternalServerErrorException('Failed to create credential')
+        }
+    }
+
+
+    async fetchCredentials(domainId: number) {
+        try {
+            
+            const credentials = await this.prisma.credential.findMany({
+                where: { domainId },
+                select: { id: true, username: true, email: true, password: true }
+            })
+            return { credentials }
+
+        } catch (error) {
+            throw new InternalServerErrorException('Failed to fetch credentials')
         }
     }
 }
