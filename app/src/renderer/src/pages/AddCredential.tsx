@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { credentialsService } from '@renderer/lib/credentialsService'
 import { CredentialDTO } from '@renderer/types'
 import { useAuth } from '@renderer/store/auth'
+import { toast } from 'sonner'
 
 export default function AddCredential() {
   const navigate = useNavigate()
@@ -26,8 +27,13 @@ export default function AddCredential() {
       credentialsService.createCredential(token!, encryptedKey!, credentialDTO),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials', domainId] })
+      toast.success('Credential added successfully')
       setTimeout(() => navigate(`/vault/${encodeURIComponent(decodedDomain)}`, { state: { domainId } }), 800)
+      
     },
+    onError: (error) => {
+      toast.error(error.message || 'Failed to add credential')
+    }
   })
 
   const strength = password ? getPasswordStrength(password) : null
