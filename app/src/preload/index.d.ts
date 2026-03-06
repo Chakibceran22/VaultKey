@@ -15,6 +15,7 @@ declare global {
       fetchDomains: (token: string) => Promise<{ domains: Domain[] } | { error: true }>
       registerDomain: (token: string, domainName: string) => Promise<{ success: boolean } | { error: true }>
       fetchCredentials: (token: string, domainId: number) => Promise<{ credentials: CredentialResponse[] } | { error: true }>
+      createCredential: (token: string, credentialDTO: CredentialDTO) => Promise<{ success: boolean } | { error: true }>
     }
   }
 }

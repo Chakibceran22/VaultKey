@@ -72,3 +72,24 @@ export async function deriveKeys(masterPassword: string): Promise<{
 
   return { authKey, encryptionKey }
 }
+
+export async function encrypt(plaintext: string, encryptionKeyHex: string): Promise<string> {
+  const keyBytes = hexToBytes(encryptionKeyHex)
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt'])
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, encoder.encode(plaintext))
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength)
+  combined.set(iv)
+  combined.set(new Uint8Array(ciphertext), iv.length)
+  return btoa(String.fromCharCode(...combined))
+}
+
+export async function decrypt(encrypted: string, encryptionKeyHex: string): Promise<string> {
+  const keyBytes = hexToBytes(encryptionKeyHex)
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt'])
+  const raw = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0))
+  const iv = raw.slice(0, 12)
+  const ciphertext = raw.slice(12)
+  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext)
+  return new TextDecoder().decode(decrypted)
+}

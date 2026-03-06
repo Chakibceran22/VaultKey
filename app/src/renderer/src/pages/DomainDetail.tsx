@@ -10,13 +10,13 @@ export default function DomainDetail() {
   const { domain } = useParams<{ domain: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { token } = useAuth()
+  const { token, encryptedKey } = useAuth()
   const decodedDomain = decodeURIComponent(domain || '')
   const domainId = (location.state as { domainId?: number })?.domainId
 
   const { data: credentials = [], isLoading, isError } = useQuery<CredentialResponse[]>({
     queryKey: ['credentials', domainId],
-    queryFn: () => credentialsService.getCredentials(token!, domainId!),
+    queryFn: () => credentialsService.getCredentials(token!, domainId!, encryptedKey!),
     enabled: !!token && !!domainId,
   })
 
@@ -51,7 +51,7 @@ export default function DomainDetail() {
           </div>
         </div>
         <button
-          onClick={() => navigate(`/vault/${encodeURIComponent(decodedDomain)}/add`)}
+          onClick={() => navigate(`/vault/${encodeURIComponent(decodedDomain)}/add`, { state: { domainId } })}
           className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary hover:bg-primary/20 transition-colors cursor-pointer"
           title="Add credential"
         >

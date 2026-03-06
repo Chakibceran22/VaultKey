@@ -18,7 +18,7 @@ export interface Credential {
 export interface CredentialDTO {
   domainId: number,
   username?: string,
-  emai: string,
+  email: string,
   password: string,
   
 }

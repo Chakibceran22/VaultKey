@@ -1,18 +1,34 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, Eye, EyeOff, Save, Check } from 'lucide-react'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
+import { ArrowLeft, RefreshCw, Eye, EyeOff, Save, Check, Loader2 } from 'lucide-react'
 import { Input } from '../components/ui/input'
 import { generatePassword, getPasswordStrength } from '../data/mock'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { credentialsService } from '@renderer/lib/credentialsService'
+import { CredentialDTO } from '@renderer/types'
+import { useAuth } from '@renderer/store/auth'
 
 export default function AddCredential() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { domain } = useParams<{ domain: string }>()
   const decodedDomain = decodeURIComponent(domain || '')
+  const domainId = (location.state as { domainId?: number })?.domainId
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const { token, encryptedKey } = useAuth()
+  const queryClient = useQueryClient()
+
+  const { mutate: saveCredential, isPending, isSuccess } = useMutation({
+    mutationFn: async (credentialDTO: CredentialDTO) =>
+      credentialsService.createCredential(token!, encryptedKey!, credentialDTO),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials', domainId] })
+      setTimeout(() => navigate(`/vault/${encodeURIComponent(decodedDomain)}`, { state: { domainId } }), 800)
+    },
+  })
 
   const strength = password ? getPasswordStrength(password) : null
 
@@ -23,8 +39,8 @@ export default function AddCredential() {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
-    setSaved(true)
-    setTimeout(() => navigate(`/vault/${encodeURIComponent(decodedDomain)}`), 800)
+    if (!domainId || !token || !encryptedKey) return
+    saveCredential({ domainId, username, email, password })
   }
 
   return (
@@ -128,10 +144,15 @@ export default function AddCredential() {
           {/* Save */}
           <button
             type="submit"
-            disabled={saved}
+            disabled={isPending || isSuccess}
             className="w-full h-11 bg-primary text-primary-foreground rounded-lg font-medium flex items-center justify-center gap-2 hover:brightness-110 transition-all disabled:opacity-70 cursor-pointer"
           >
-            {saved ? (
+            {isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : isSuccess ? (
               <>
                 <Check className="w-4 h-4" />
                 Saved

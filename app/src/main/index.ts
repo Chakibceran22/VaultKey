@@ -115,6 +115,19 @@ ipcMain.handle('fetch-credentials', async (_, token: string, domainId: number) =
   }
 })
 
+ipcMain.handle('create-credential', async (_, token: string, credentialDTO: any) => {
+  try {
+    const response = await axios.post(`${API_URL}/credential/create`, credentialDTO, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    return response.data
+  } catch (error: any) {
+    throw new Error(error.response?.data?.message || 'Failed to create credential')
+  }
+})
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
