@@ -12,16 +12,18 @@ import { PasswordModule } from './credential/credential.module';
 import { DomainModule } from './domain/domain.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
+import { configSchema } from './common/config/config-module.config';
 
 @Module({
-  imports: [ 
+  imports: [
     ConfigModule.forRoot({
+      validationSchema: configSchema,
       isGlobal: true
     }),
     PrismaModule,
     WinstonModule.forRoot({
       transports: [
-       new winston.transports.Console({
+        new winston.transports.Console({
           format: winston.format.combine(
             winston.format.timestamp(),
             winston.format.colorize(),
@@ -44,17 +46,17 @@ import 'winston-daily-rotate-file';
 
       ]
     }),
-     JwtModule.registerAsync({
+    JwtModule.registerAsync({
       global: true,
-      
       inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => {
-        console.log("JWT started")
+      useFactory: (configService: ConfigService) => {
         return {
-          secret: configService.get<string>('JWT_SECRET') || 'default_secret',
-          signOptions: { expiresIn: '24h' },
-        }
-      }
+          secret: configService.getOrThrow<string>('JWT_SECRET'),
+          signOptions: {
+            expiresIn: configService.getOrThrow<string>('JWT_EXPIRES_IN') as `${number}${'s' | 'm' | 'h' | 'd'}`,
+          },
+        };
+      },
     }),
     AuthModule,
     PasswordModule,
@@ -63,4 +65,4 @@ import 'winston-daily-rotate-file';
   controllers: [CredentialController],
   providers: [CredentialService],
 })
-export class AppModule {}
+export class AppModule { }

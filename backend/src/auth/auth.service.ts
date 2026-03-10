@@ -47,9 +47,9 @@ export class AuthService {
             return { success: true }
 
         } catch (error) {
-            return {
-                success: false
-            }
+            this.logger.error(`Error registering auth key: ${error.message}`, { context: 'AuthService' });
+
+            throw new InternalServerErrorException('Error registering master password')
         }
 
     }

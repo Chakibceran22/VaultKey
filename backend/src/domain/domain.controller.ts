@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Param, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { AuthGuard } from 'src/auth/guards/auth.guard';
 import { Post,Get } from '@nestjs/common';
 import { DomainService } from './domain.service';
@@ -22,7 +22,7 @@ export class DomainController {
 
     @UseGuards(AuthGuard)
     @Delete('delete/:domainId')
-    async deleteDomain(@Param('domainId') domainId: number) {
+    async deleteDomain(@Param('domainId', ParseIntPipe) domainId: number) {
         return await this.domainService.deleteDomain(domainId);
     }
 
