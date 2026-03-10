@@ -13,6 +13,8 @@ import { DomainModule } from './domain/domain.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
 import { configSchema } from './common/config/config-module.config';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -58,11 +60,25 @@ import { configSchema } from './common/config/config-module.config';
         };
       },
     }),
+    ThrottlerModule.forRoot([{
+      name: "short",
+      ttl:1000,
+      limit: 5
+    },{
+      name: "long",
+      ttl: 60 * 1000,
+      limit: 100
+    }]),
     AuthModule,
     PasswordModule,
     DomainModule
   ],
   controllers: [CredentialController],
-  providers: [CredentialService],
+  providers: [CredentialService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    }
+  ],
 })
 export class AppModule { }

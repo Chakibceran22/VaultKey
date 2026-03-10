@@ -5,7 +5,6 @@ import icon from '../../resources/icon.png?asset'
 import axios from 'axios'
 
 const API_URL = __API_URL__
-console.log(API_URL)
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({

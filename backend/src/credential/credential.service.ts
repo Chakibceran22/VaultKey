@@ -22,16 +22,10 @@ export class CredentialService {
             })
 
             if (newCredential) return { success: true }
-            return { success: false }
 
         } catch (error) {
-            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-                const field = (error.meta?.target as string[])?.[0] ?? 'field'
-                throw new ConflictException(`This ${field} is already in use`)
-            }
-
             this.logger.error(`Error in createCredential: ${error.message}`, { context: 'CredentialService' });
-            throw new InternalServerErrorException('Failed to create credential')
+            throw error
         }
     }
 
@@ -47,7 +41,7 @@ export class CredentialService {
 
         } catch (error) {
             this.logger.error(`Error in fetchCredentials: ${error.message}`, { context: 'CredentialService' });
-            throw new InternalServerErrorException('Failed to fetch credentials')
+            throw error
         }
     }
 
@@ -59,7 +53,7 @@ export class CredentialService {
             return { success: !!deleted }
         } catch (error) {
             this.logger.error(`Error in deleteCredential: ${error.message}`, { context: 'CredentialService' });
-            throw new InternalServerErrorException('Failed to delete credential')
+            throw error
         }
     }
 
@@ -79,7 +73,7 @@ export class CredentialService {
             
         } catch (error) {
             this.logger.error(`Error in updateCredential: ${error.message}`, { context: 'CredentialService' });
-            throw new InternalServerErrorException('Failed to update credential')
+            throw error
         }
     }
 }

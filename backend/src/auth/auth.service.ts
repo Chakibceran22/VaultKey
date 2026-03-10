@@ -1,4 +1,4 @@
-import { Inject, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthStatusResponseDTO } from './dtos/AuthStatusResponse.dto';
@@ -48,8 +48,7 @@ export class AuthService {
 
         } catch (error) {
             this.logger.error(`Error registering auth key: ${error.message}`, { context: 'AuthService' });
-
-            throw new InternalServerErrorException('Error registering master password')
+            throw error
         }
 
     }
@@ -60,15 +59,12 @@ export class AuthService {
             const dbKey = await this.prisma.authKey.findFirst();
             if (!dbKey) {
                 this.logger.warn("No auth key found in the database during verification", { context: 'AuthService' });
-                return {
-                    valid: false,
-                    token: null
-                }
+                throw new NotFoundException('No master password set. Please register first.');
             }
             const isValid = key === dbKey.hash;
             this.logger.log(`Auth key verification result: ${isValid}`, { context: 'AuthService' });
             if(isValid) {
-                const token = this.jwtService.sign({ sub: 'master-user' }, { expiresIn: '7h' });
+                const token = this.jwtService.sign({ sub: 'master-user' });
                 return { valid: true, token };
             }
             return { 
@@ -76,7 +72,8 @@ export class AuthService {
                 token: null
              };
         } catch (error) {
-            throw new InternalServerErrorException('Error verifying master password')
+            this.logger.error(`Error verifying auth key: ${error.message}`, { context: 'AuthService' });
+            throw error
         }
     }
 }

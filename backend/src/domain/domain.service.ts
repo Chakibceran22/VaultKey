@@ -22,13 +22,10 @@ export class DomainService {
             return { success: true }
 
         } catch (error) {
-            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-                const field = (error.meta?.target as string[])?.[0] ?? 'field'
-                throw new ConflictException(`This ${field} already exists`)
-            }
+            
 
             this.logger.error(`Error in registerDomain: ${error.message}`, { context: 'DomainService' });
-            throw new InternalServerErrorException('Failed to register domain');
+            throw error
         }
     }
 
@@ -44,7 +41,9 @@ export class DomainService {
                 domains
             }
         } catch (error) {
-            throw new InternalServerErrorException('Failed to fetch domains');
+            this.logger.error(`Error in fetchDomains: ${error.message}`, { context: 'DomainService' });
+            throw error
+
         }
     }
 
@@ -57,7 +56,7 @@ export class DomainService {
             return { success: !!deleted }
         } catch (error) {
             this.logger.error(`Error in deleteDomain: ${error.message}`, { context: 'DomainService' });
-            throw new InternalServerErrorException('Failed to delete domain');
+            throw error
         }
     }
 }

@@ -6,6 +6,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import pRetry from 'p-retry';
 import { GlobalExceptionFilter } from './common/filters/GlobalExceptionFilter.filter';
+import { PrismaExceptionFilter } from './common/filters/PrismaExceptionFilter.filter';
 
 async function bootstrap(): Promise<void> {
   let app: NestExpressApplication | undefined;
@@ -21,7 +22,8 @@ async function bootstrap(): Promise<void> {
         forbidNonWhitelisted: true,
         transform: true,
       }));
-      app.useGlobalFilters(new GlobalExceptionFilter(app.get(WINSTON_MODULE_NEST_PROVIDER)));
+      app.useGlobalFilters(new GlobalExceptionFilter(app.get(WINSTON_MODULE_NEST_PROVIDER)),
+    new PrismaExceptionFilter(app.get(WINSTON_MODULE_NEST_PROVIDER)));
 
       app.enableCors();
 
