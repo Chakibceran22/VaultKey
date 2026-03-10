@@ -6,8 +6,6 @@ import { ConfigModule } from '@nestjs/config';
 import { ConfigService } from '@nestjs/config';
 import { WinstonModule } from 'nest-winston';
 import { AuthModule } from './auth/auth.module';
-import { CredentialService } from './credential/credential.service';
-import { CredentialController } from './credential/credential.controller';
 import { PasswordModule } from './credential/credential.module';
 import { DomainModule } from './domain/domain.module';
 import * as winston from 'winston';
@@ -73,8 +71,7 @@ import { APP_GUARD } from '@nestjs/core';
     PasswordModule,
     DomainModule
   ],
-  controllers: [CredentialController],
-  providers: [CredentialService,
+  providers: [
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import {  Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston/dist/winston.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthStatusResponseDTO } from './dtos/AuthStatusResponse.dto';
@@ -27,7 +27,6 @@ export class AuthService {
 
 
         } catch (error) {
-            console.error("Error in testStatus:", error)
             this.logger.error(`Error in testStatus: ${error.message}`, { context: 'AuthService' });
             return {
                 status: AuthStatusResponseDTO.ERROR
