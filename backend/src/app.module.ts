@@ -6,7 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ConfigService } from '@nestjs/config';
 import { WinstonModule } from 'nest-winston';
 import { AuthModule } from './auth/auth.module';
-import { PasswordModule } from './credential/credential.module';
+import { CredentialModule } from './credential/credential.module';
 import { DomainModule } from './domain/domain.module';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
@@ -68,7 +68,7 @@ import { APP_GUARD } from '@nestjs/core';
       limit: 100
     }]),
     AuthModule,
-    PasswordModule,
+    CredentialModule,
     DomainModule
   ],
   providers: [

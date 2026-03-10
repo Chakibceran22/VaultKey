@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18
+    image: postgres:16-alpine
     container_name: password_pg_db
     environment:
       POSTGRES_DB: password_db
@@ -9,12 +9,29 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - pgpasswordata:/var/lib/postgresql
+      - pgpasswordata:/var/lib/postgresql/data
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chakib -d password_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://chakib:ChakibLovesMimane123@.@postgres:5432/password_db
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      PORT: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgpasswordata:
