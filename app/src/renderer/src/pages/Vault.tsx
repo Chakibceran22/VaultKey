@@ -43,9 +43,10 @@ export default function Vault() {
   })
 
   const filtered = useMemo(() => {
-    if (!search) return domains
-    const q = search.toLowerCase()
-    return domains.filter((d) => d.name.toLowerCase().includes(q))
+    const list = !search
+      ? domains
+      : domains.filter((d) => d.name.toLowerCase().includes(search.toLowerCase()))
+    return [...list].sort((a, b) => a.name.localeCompare(b.name))
   }, [search, domains])
 
   const totalCredentials = domains.reduce((sum, d) => sum + d._count.credentials, 0)

@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-
+import LokiTransport from 'winston-loki';
 import { PrismaModule } from './prisma/prisma.module';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule } from '@nestjs/config';
@@ -27,9 +27,10 @@ import { APP_GUARD } from '@nestjs/core';
           format: winston.format.combine(
             winston.format.timestamp(),
             winston.format.colorize(),
-            winston.format.printf(({ timestamp, level, message, context }) => {
-              return `${timestamp} [${context || 'App'}] ${level}: ${message}`;
-            }),
+            winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
+              return `${timestamp} [${context || 'App'}] ${level}: ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ''
+                }`;
+            })
           ),
         }),
         new winston.transports.DailyRotateFile({
@@ -43,6 +44,10 @@ import { APP_GUARD } from '@nestjs/core';
             winston.format.json(),
           ),
         }),
+        new LokiTransport({
+          host: process.env.LOKI_URL || 'http://localhost:3100',
+          labels: { app: 'vaultkey-backend' },
+        })
 
       ]
     }),
@@ -60,9 +65,9 @@ import { APP_GUARD } from '@nestjs/core';
     }),
     ThrottlerModule.forRoot([{
       name: "short",
-      ttl:1000,
+      ttl: 1000,
       limit: 5
-    },{
+    }, {
       name: "long",
       ttl: 60 * 1000,
       limit: 100
