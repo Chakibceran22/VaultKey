@@ -1,0 +1,40 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+        working-directory: ./app
+      - run: npm run build:win
+        working-directory: ./app
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: app/dist/*.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+        working-directory: ./app
+      - run: npm run build:mac
+        working-directory: ./app
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: app/dist/*.dmg
