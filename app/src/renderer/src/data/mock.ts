@@ -1,4 +1,4 @@
-import type { Credential, DomainGroup } from '../types'
+import type { Credential } from '../types'
 
 export const mockCredentials: Credential[] = [
   {
