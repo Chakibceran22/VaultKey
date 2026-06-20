@@ -1,17 +1,16 @@
 services:
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped 
+    restart: unless-stopped
     container_name: password_pg_db
     environment:
       POSTGRES_DB: password_db
       POSTGRES_USER: chakib
-      POSTGRES_PASSWORD: ChakibLovesMimane123@.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-55432}:5432"
     volumes:
       - pgpasswordata:/var/lib/postgresql/data
-
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chakib -d password_db"]
       interval: 5s
@@ -22,9 +21,9 @@ services:
     image: vaultkey-backend:latest
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-13000}:3000"
     environment:
-      DATABASE_URL: postgresql://chakib:ChakibLovesMimane123%40.@postgres:5432/password_db
+      DATABASE_URL: postgresql://chakib:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/password_db
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       PORT: 3000
@@ -33,19 +32,20 @@ services:
       postgres:
         condition: service_healthy
 
+  # loki:
+  #   image: grafana/loki:2.9.0
+  #   container_name: loki
+  #   restart: unless-stopped
+  #   # no ports — only backend and grafana talk to it, both inside the network
 
-  loki:
-      image: grafana/loki:2.9.0
-      container_name: loki
-      ports:
-        - "3100:3100"
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: grafana
+  #   restart: unless-stopped
+  #   ports:
+  #     - "127.0.0.1:${GRAFANA_HOST_PORT:-13001}:3000"
+  #   depends_on:
+  #     - loki
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3001:3000"
-    depends_on:
-      - loki
 volumes:
   pgpasswordata:

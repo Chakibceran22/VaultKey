@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm ls react)",
+      "Bash(npm install react-router-dom)",
+      "Bash(npm install hash-wasm)",
+      "Bash(npm install sonner)"
+    ]
+  }
+}

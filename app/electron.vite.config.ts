@@ -1,21 +1,26 @@
 import { resolve } from 'path'
-import { defineConfig } from 'electron-vite'
+import { defineConfig, loadEnv } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-export default defineConfig({
-  main: {
-    define: {
-      __API_URL__: JSON.stringify('http://localhost:3000')
-    }
-  },
-  preload: {},
-  renderer: {
-    resolve: {
-      alias: {
-        '@renderer': resolve('src/renderer/src')
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const apiUrl = env.VITE_API_URL 
+
+  return {
+    main: {
+      define: {
+        __API_URL__: JSON.stringify(apiUrl)
       }
     },
-    plugins: [react(),tailwindcss()]
+    preload: {},
+    renderer: {
+      resolve: {
+        alias: {
+          '@renderer': resolve('src/renderer/src')
+        }
+      },
+      plugins: [react(), tailwindcss()]
+    }
   }
 })
