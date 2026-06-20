@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Shield, Eye, EyeOff, ArrowRight } from 'lucide-react'
 import { useAuth } from '@renderer/store/auth'
 import { Input } from '../components/ui/input'
@@ -11,7 +10,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const { login } = useAuth()
-  const navigate = useNavigate()
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
