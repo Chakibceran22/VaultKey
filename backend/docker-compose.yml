@@ -1,8 +1,12 @@
+name: vaultkey
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     container_name: password_pg_db
+    networks:
+      - vaultkey-net
     environment:
       POSTGRES_DB: password_db
       POSTGRES_USER: chakib
@@ -31,6 +35,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - vaultkey-net
 
   # loki:
   #   image: grafana/loki:2.9.0
@@ -46,6 +52,11 @@ services:
   #     - "127.0.0.1:${GRAFANA_HOST_PORT:-13001}:3000"
   #   depends_on:
   #     - loki
+
+networks:
+  vaultkey-net:
+    name: vaultkey-net
+    driver: bridge
 
 volumes:
   pgpasswordata:
