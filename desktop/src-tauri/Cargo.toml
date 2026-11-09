@@ -1,0 +1,75 @@
+[package]
+name = "vaultkey"
+version = "2.0.0"
+description = "VaultKey — local-first password vault"
+authors = ["Chakib Ceran"]
+edition = "2024"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name (see cargo#8519).
+name = "vaultkey_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Embedded SQLite (bundled, so the app never depends on the system library version).
+rusqlite = { version = "0.41", features = ["bundled"] }
+
+# Vault cryptography. These must stay byte-compatible with the format the Electron
+# app wrote (hash-wasm Argon2id + WebCrypto HKDF/AES-GCM + Node scrypt verifier).
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+hkdf = "0.12"
+sha2 = "0.10"
+# Authenticator (TOTP) codes: HMAC-SHA1 is what nearly every service uses.
+hmac = "0.12"
+sha1 = "0.10"
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+scrypt = { version = "0.11", default-features = false }
+rand_core = { version = "0.6", features = ["getrandom"] }
+subtle = "2"
+zeroize = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+hex = "0.4"
+
+# Key derivation is deliberately expensive. Unoptimised (debug) builds of these crates
+# make unlock take several seconds under `tauri dev`, so optimise just them in dev/test.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.sha1]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.aes-gcm]
+opt-level = 3
+
+# See https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

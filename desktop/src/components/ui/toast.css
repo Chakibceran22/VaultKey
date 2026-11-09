@@ -1,0 +1,100 @@
+/* Toast stack (Base UI Toast): bottom-right, newest in front, the rest
+   peeking above it; hovering or focusing the stack fans it out. Only
+   transform and opacity animate. */
+
+.toast-viewport {
+  position: fixed;
+  z-index: 400;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(23rem, calc(100vw - 2rem));
+}
+
+.toast {
+  --gap: 0.625rem;
+  --peek: 0.55rem;
+  --scale: calc(max(0, 1 - (var(--toast-index) * 0.05)));
+  --shrink: calc(1 - var(--scale));
+  --height: var(--toast-frontmost-height, var(--toast-height));
+  --offset-y: calc(
+    var(--toast-offset-y) * -1 + (var(--toast-index) * var(--gap) * -1) + var(--toast-swipe-movement-y)
+  );
+  --stacked: translateX(var(--toast-swipe-movement-x))
+    translateY(
+      calc(var(--toast-swipe-movement-y) - (var(--toast-index) * var(--peek)) - (var(--shrink) * var(--height)))
+    )
+    scale(var(--scale));
+  --fanned: translateX(var(--toast-swipe-movement-x)) translateY(var(--offset-y));
+
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: var(--height);
+  z-index: calc(1000 - var(--toast-index));
+  transform-origin: bottom center;
+  transform: var(--stacked);
+  transition:
+    transform 450ms var(--ease-smooth),
+    opacity 300ms var(--ease-smooth),
+    height 150ms var(--ease-smooth);
+  user-select: none;
+  cursor: default;
+}
+
+/* The invisible strip between fanned-out toasts keeps the stack hovered. */
+.toast::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  height: calc(var(--gap) + 1px);
+}
+
+.toast[data-expanded] {
+  transform: var(--fanned);
+  height: var(--toast-height);
+}
+
+.toast[data-starting-style],
+.toast[data-ending-style]:not([data-limited]):not([data-swipe-direction]) {
+  transform: translateY(150%);
+}
+
+.toast[data-starting-style],
+.toast[data-ending-style],
+.toast[data-limited] {
+  opacity: 0;
+}
+
+.toast[data-ending-style][data-swipe-direction="down"] {
+  transform: translateY(calc(var(--toast-swipe-movement-y) + 150%));
+}
+.toast[data-ending-style][data-swipe-direction="right"] {
+  transform: translateX(calc(var(--toast-swipe-movement-x) + 150%)) translateY(var(--offset-y));
+}
+
+.toast-content {
+  transition: opacity 250ms var(--ease-smooth);
+}
+.toast-content[data-behind] {
+  opacity: 0;
+}
+.toast-content[data-expanded] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: opacity 150ms linear;
+  }
+  .toast[data-starting-style],
+  .toast[data-ending-style]:not([data-limited]):not([data-swipe-direction]) {
+    transform: var(--stacked);
+  }
+  .toast[data-expanded][data-starting-style],
+  .toast[data-expanded][data-ending-style]:not([data-limited]):not([data-swipe-direction]) {
+    transform: var(--fanned);
+  }
+}

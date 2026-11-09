@@ -1,0 +1,153 @@
+/**
+ * Multi-step saves, each one a single user action: an account (website created
+ * on demand, then the account, then its sign-in links) and a service (its new
+ * account first, when it has one).
+ */
+import type { QueryClient } from '@tanstack/react-query'
+import type { AccountSummary, DomainRecord } from '@renderer/shared/contracts'
+import { refreshVault } from '@renderer/hooks/use-vault'
+import { api } from './api'
+import { credentialsService } from './credentialsService'
+import { domainService } from './domainsService'
+import { unwrap } from './ipc'
+import { toast } from './toast'
+
+/** Same rule as the Rust core (validation.rs), checked before anything is created. */
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export interface AccountDraft {
+  website: string
+  username: string
+  email: string
+  /**
+   * A password of its own, "Sign in with Google" style links to other accounts,
+   * or nothing to type at all (passkey-only, or an account that only keeps keys).
+   */
+  method: 'password' | 'linked' | 'none'
+  password: string
+  signInWith: number[]
+  /** Accounts that can recover this one (its recovery email). */
+  recoveryBy: number[]
+  /** Devices it is signed in on. */
+  deviceIds: number[]
+}
+
+export function emptyAccountDraft(website = ''): AccountDraft {
+  return {
+    website,
+    username: '',
+    email: '',
+    method: 'password',
+    password: '',
+    signInWith: [],
+    recoveryBy: [],
+    deviceIds: []
+  }
+}
+
+/** Links and devices, saved after the account itself, all together or not at all. */
+async function saveConnections(accountId: number, draft: AccountDraft): Promise<void> {
+  unwrap(
+    await api.setAccountConnections(accountId, {
+      signIn: draft.method === 'linked' ? draft.signInWith : [],
+      recovery: draft.recoveryBy,
+      deviceIds: draft.deviceIds
+    })
+  )
+}
+
+function checkDraft(draft: AccountDraft, requireWebsite: boolean): void {
+  if (requireWebsite && !draft.website.trim()) throw new Error('Enter the website.')
+  if (!EMAIL.test(draft.email)) throw new Error('Enter a valid email.')
+  if (draft.method === 'password' && !draft.password) {
+    throw new Error('Enter the password, or choose an account it signs in with.')
+  }
+  if (draft.method === 'linked' && draft.signInWith.length === 0) {
+    throw new Error('Choose the account it signs in with.')
+  }
+}
+
+export async function createAccount(
+  queryClient: QueryClient,
+  domains: DomainRecord[],
+  draft: AccountDraft
+): Promise<number> {
+  checkDraft(draft, true)
+  const name = draft.website.trim()
+  const existing = domains.find((d) => d.name.toLowerCase() === name.toLowerCase())
+  const domainId = existing?.id ?? (await domainService.registerDomain(name))
+  let id: number
+  try {
+    id = await credentialsService.createCredential({
+      domainId,
+      username: draft.username,
+      email: draft.email,
+      password: draft.method === 'password' ? draft.password : ''
+    })
+  } catch (error) {
+    // Don't leave an empty website behind for an account that failed.
+    if (!existing) await domainService.deleteDomain(domainId).catch(() => {})
+    throw error
+  }
+  try {
+    await saveConnections(id, draft)
+  } catch (error) {
+    // The account itself is saved: report the links, don't fail (a retry would
+    // try to create the same account again).
+    const reason = error instanceof Error && error.message ? error.message : 'they could not be saved'
+    toast.error(`Account saved, but not its links and devices: ${reason}`)
+  } finally {
+    await refreshVault(queryClient, domainId)
+  }
+  return id
+}
+
+export async function updateAccount(
+  queryClient: QueryClient,
+  account: AccountSummary,
+  draft: AccountDraft
+): Promise<void> {
+  checkDraft(draft, false)
+  await credentialsService.updateCredential(account.id, {
+    username: draft.username,
+    email: draft.email,
+    password: draft.method === 'password' ? draft.password : ''
+  })
+  try {
+    await saveConnections(account.id, draft)
+  } finally {
+    await refreshVault(queryClient, account.domainId)
+  }
+}
+
+export interface ServiceDraft {
+  name: string
+  url: string
+  /** Which account the service uses: one already in the vault, a new one, or none yet. */
+  access: 'existing' | 'new' | 'none'
+  accountId: number | null
+  newAccount: AccountDraft
+}
+
+export async function saveService(
+  queryClient: QueryClient,
+  domains: DomainRecord[],
+  projectId: number,
+  serviceId: number | null,
+  draft: ServiceDraft,
+  /** Called once the new account exists, so a retry uses it instead of creating it again. */
+  onAccountCreated?: (accountId: number) => void
+): Promise<void> {
+  if (!draft.name.trim()) throw new Error('Enter the service name.')
+  if (draft.access === 'existing' && !draft.accountId) throw new Error('Choose the account this service uses.')
+  let accountId: number | null = null
+  if (draft.access === 'existing') accountId = draft.accountId
+  else if (draft.access === 'new') {
+    accountId = await createAccount(queryClient, domains, draft.newAccount)
+    onAccountCreated?.(accountId)
+  }
+  const input = { name: draft.name, url: draft.url, accountId }
+  if (serviceId) unwrap(await api.updateService(serviceId, input))
+  else unwrap(await api.createService(projectId, input))
+  await refreshVault(queryClient)
+}

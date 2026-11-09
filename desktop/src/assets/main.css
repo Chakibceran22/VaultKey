@@ -1,0 +1,345 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * VaultKey uses the DevNotes design language: a calm canvas, one indigo accent,
+ * and navigation chrome made of frosted glass. Tokens and surfaces below mirror
+ * DevNotes' index.css so the two apps read as one family.
+ */
+@theme inline {
+  /* SF Pro on Apple devices; Inter (closest open match) everywhere else. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Variable', ui-sans-serif, system-ui,
+    sans-serif;
+  --font-heading:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter Variable', ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono Variable', Menlo, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-heading: var(--heading);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar-accent: var(--sidebar-accent);
+
+  /* Motion: one smooth curve for most things, a gentle spring for panels. */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+}
+
+:root {
+  --radius: 0.7rem;
+
+  --background: #eef0f6;
+  --foreground: #34374c;
+  --heading: #1b1d2e;
+  --card: rgb(255 255 255 / 0.62);
+  --popover: rgb(250 250 253 / 0.86);
+  --popover-foreground: #34374c;
+  --primary: #4f5bd5;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(120 126 170 / 0.1);
+  --muted: rgb(120 126 170 / 0.1);
+  --muted-foreground: #696d86;
+  --accent: rgb(79 91 213 / 0.08);
+  --destructive: #c0453f;
+  --success: #2e7a57;
+  --warning: #a06a1c;
+  --border: rgb(60 66 110 / 0.11);
+  --input: rgb(60 66 110 / 0.16);
+  --ring: #4f5bd5;
+  --sidebar-accent: rgb(60 66 110 / 0.07);
+
+  /*
+   * Elevation (L0 canvas → L3 overlay): a 1px border first, then at most a soft
+   * shadow under 8% alpha. The frost (translucency + blur) is the system's
+   * texture; the background itself stays flat.
+   */
+  /* L1 · frost: lists, panels, tab bodies */
+  --frost-bg: rgb(255 255 255 / 0.72);
+  --frost-border: rgb(60 66 110 / 0.09);
+  --frost-highlight: rgb(255 255 255 / 0.9);
+  --frost-shadow: 0 1px 2px rgb(30 34 70 / 0.04);
+  /* L2 · glass: sticky toolbars, dropdowns */
+  --glass-bg: rgb(250 251 254 / 0.78);
+  --glass-border: rgb(60 66 110 / 0.1);
+  --glass-edge: rgb(60 66 110 / 0.04);
+  --glass-highlight: rgb(255 255 255 / 0.9);
+  --glass-shadow: 0 4px 12px rgb(30 34 70 / 0.06);
+  /* L3 · glass-strong: modals, dialogs, the palette, toasts (over a scrim) */
+  --glass-strong-bg: rgb(250 251 254 / 0.9);
+  --glass-strong-border: rgb(60 66 110 / 0.12);
+  --glass-strong-highlight: rgb(255 255 255 / 0.95);
+  --glass-strong-shadow: 0 8px 24px rgb(30 34 70 / 0.07);
+  --scrim: rgb(20 22 36 / 0.18);
+
+}
+
+.dark {
+  --background: #0e1017;
+  --foreground: #c8cbdb;
+  --heading: #f0f1f7;
+  --card: rgb(36 39 54 / 0.5);
+  --popover: rgb(30 33 46 / 0.86);
+  --popover-foreground: #c8cbdb;
+  --primary: #8f98f5;
+  --primary-foreground: #0e1017;
+  --secondary: rgb(200 205 240 / 0.07);
+  --muted: rgb(200 205 240 / 0.07);
+  --muted-foreground: #8b8fa6;
+  --accent: rgb(143 152 245 / 0.1);
+  --destructive: #e07a73;
+  --success: #8bcfab;
+  --warning: #e3b469;
+  --border: rgb(220 225 255 / 0.08);
+  --input: rgb(220 225 255 / 0.12);
+  --ring: #8f98f5;
+  --sidebar-accent: rgb(220 225 255 / 0.06);
+
+  /* Dark: a lightness step and a top-edge highlight instead of shadows. */
+  --frost-bg: rgb(255 255 255 / 0.035);
+  --frost-border: rgb(220 225 255 / 0.1);
+  --frost-highlight: rgb(255 255 255 / 0.06);
+  --frost-shadow: 0 0 0 transparent;
+  --glass-bg: rgb(24 26 36 / 0.82);
+  --glass-border: rgb(220 225 255 / 0.11);
+  --glass-edge: rgb(0 0 0 / 0.2);
+  --glass-highlight: rgb(255 255 255 / 0.06);
+  --glass-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
+  --glass-strong-bg: rgb(26 28 39 / 0.92);
+  --glass-strong-border: rgb(220 225 255 / 0.13);
+  --glass-strong-highlight: rgb(255 255 255 / 0.07);
+  --glass-strong-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  --scrim: rgb(0 0 0 / 0.55);
+
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+  }
+  html {
+    @apply font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-size: 15px;
+    /* A desktop app: text is selectable where it matters (inputs, values), not the chrome. */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea,
+  [data-selectable] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-heading;
+  }
+  button {
+    cursor: pointer;
+  }
+  /* Website suggestions (<datalist>) without the native dropdown arrow. */
+  input[list]::-webkit-calendar-picker-indicator {
+    display: none !important;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 24%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+    border-radius: 8px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+  }
+}
+
+@layer components {
+  /* Frosted glass pane: translucent fill, real backdrop blur, a lit top rim. */
+  .glass {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 0 0 0.5px var(--glass-edge),
+      var(--glass-shadow);
+  }
+
+  /* Stronger glass for panels that float: more see-through, heavier blur. */
+  .glass-strong {
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
+    border: 1px solid var(--glass-strong-border);
+    box-shadow:
+      inset 0 1px 0 var(--glass-strong-highlight),
+      0 0 0 0.5px var(--glass-edge),
+      var(--glass-strong-shadow);
+  }
+
+  /* Frosted cards for in-content surfaces. */
+  .frost {
+    background: var(--frost-bg);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--frost-border);
+    box-shadow:
+      inset 0 1px 0 var(--frost-highlight),
+      var(--frost-shadow);
+  }
+
+  /* Panels (search, dialogs) drop in from their top edge on a soft spring. */
+  .panel-motion {
+    transform-origin: top center;
+    transition:
+      opacity 180ms var(--ease-smooth),
+      scale 340ms var(--ease-spring),
+      translate 340ms var(--ease-spring);
+  }
+  .panel-motion[data-starting-style] {
+    opacity: 0;
+    scale: 0.94;
+    --tw-translate-y: -10px;
+  }
+  .panel-motion[data-ending-style] {
+    opacity: 0;
+    scale: 0.98;
+    --tw-translate-y: -4px;
+    transition-duration: 140ms;
+    transition-timing-function: var(--ease-smooth);
+  }
+  .backdrop-motion {
+    transition: opacity 220ms var(--ease-smooth);
+  }
+  .backdrop-motion[data-starting-style],
+  .backdrop-motion[data-ending-style] {
+    opacity: 0;
+  }
+  .backdrop-motion[data-ending-style] {
+    transition-duration: 140ms;
+  }
+
+  /* A panel's rows follow a beat later, one after another, only while opening. */
+  [data-entering] [data-stagger] {
+    animation: rise-in 300ms var(--ease-smooth) both;
+    animation-delay: calc(min(var(--i, 0), 8) * 30ms + 70ms);
+  }
+
+  /* Centred modals (L3), anchored near the top so a growing form never jumps. */
+  .modal-frame {
+    top: max(3.5rem, 9vh);
+    max-height: calc(100dvh - max(3.5rem, 9vh) - 1.5rem);
+  }
+
+  .reveal-in {
+    animation: reveal-in 260ms var(--ease-smooth) both;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
+}
+
+/* Theme switch: the old and new page crossfade (View Transitions). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 280ms;
+  animation-timing-function: var(--ease-smooth);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-motion,
+  .panel-motion[data-ending-style] {
+    transition: opacity 120ms linear;
+  }
+  .panel-motion[data-starting-style],
+  .panel-motion[data-ending-style] {
+    scale: 1;
+    --tw-translate-y: 0px;
+  }
+  [data-entering] [data-stagger],
+  .reveal-in {
+    animation: none;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong,
+  .frost {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: color-mix(in oklab, var(--background) 92%, white);
+  }
+  .dark .glass,
+  .dark .glass-strong,
+  .dark .frost {
+    background: color-mix(in oklab, var(--background) 88%, white);
+  }
+}
