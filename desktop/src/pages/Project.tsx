@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { FilePlus, Plus, Trash } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { AccountSummary, SecretMeta, Service } from '@renderer/shared/contracts'
+import type { AccountSummary, SecretMeta, Service, StagedList } from '@renderer/shared/contracts'
 import { RelatedGroup } from '@renderer/components/accounts/parts'
 import {
   EmptyFrame,
@@ -15,8 +15,9 @@ import {
   Section,
   useShowSection
 } from '@renderer/components/layout/page'
-import { SecretRow, ServiceRow } from '@renderer/components/projects/rows'
+import { SecretRow, ServiceRow, type ServiceAccountView } from '@renderer/components/projects/rows'
 import { SecretForm, ServiceForm } from '@renderer/components/projects/forms'
+import { UploadFiles } from '@renderer/components/projects/UploadFiles'
 import { Button } from '@renderer/components/ui/button'
 import { useConfirm } from '@renderer/components/ui/confirm'
 import { InlineEdit } from '@renderer/components/ui/controls'
@@ -32,6 +33,7 @@ import { toast } from '@renderer/lib/toast'
 type ModalState =
   | { open: boolean; kind: 'service'; service: Service | null }
   | { open: boolean; kind: 'secret'; secret: SecretMeta | null }
+  | { open: boolean; kind: 'upload'; incoming: StagedList | null }
 
 /**
  * Pattern: Detail / Record. One project: name and description edited in place,
@@ -48,6 +50,8 @@ export default function ProjectPage(): React.ReactElement {
   const relationsOf = useRelations()
   const { confirm, dialog } = useConfirm()
   const setDropTarget = useDropTarget((s) => s.setTarget)
+  const dropped = useDropTarget((s) => s.dropped)
+  const setDropped = useDropTarget((s) => s.setDropped)
   const [modal, setModal] = useState<ModalState>({ open: false, kind: 'service', service: null })
 
   const project = projects.find((p) => p.id === projectId)
@@ -65,16 +69,17 @@ export default function ProjectPage(): React.ReactElement {
 
   useShowSection(!!project)
 
-  const addFiles = async (): Promise<void> => {
-    try {
-      const report = unwrap(await api.importFiles(projectId, null))
-      await refreshVault(queryClient)
-      if (report.imported.length) toast.success(`${plural(report.imported.length, 'file')} added`)
-      for (const skipped of report.skipped) toast.error(`${skipped.name}: ${skipped.reason}`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Couldn’t add the files')
-    }
-  }
+  // Files dropped onto the window wait in the upload dialog, which opens (or, if
+  // open, shows them too).
+  useEffect(() => {
+    if (!dropped || !project) return
+    setDropped(null)
+    setModal((current) =>
+      current.open && current.kind !== 'upload' ? current : { open: true, kind: 'upload', incoming: dropped }
+    )
+  }, [dropped, project, setDropped])
+
+  const addFiles = (): void => setModal({ open: true, kind: 'upload', incoming: null })
 
   const addService = (): void => setModal({ open: true, kind: 'service', service: null })
   const addSecret = (): void => setModal({ open: true, kind: 'secret', secret: null })
@@ -184,14 +189,23 @@ export default function ProjectPage(): React.ReactElement {
     }
   }
 
-  const closeModal = (): void => setModal((current) => ({ ...current, open: false }))
+  const closeModal = (): void => {
+    // Files left in a closed upload dialog are not kept.
+    if (modal.kind === 'upload') void api.clearStagedFiles()
+    setModal((current) => ({ ...current, open: false }))
+  }
+
+  const accountViews = (service: Service): ServiceAccountView[] =>
+    service.accounts.flatMap(({ accountId, role }) => {
+      const account = accounts.find((a) => a.id === accountId)
+      return account ? [{ account, role, via: relationsOf(account.id).signsInWith[0] }] : []
+    })
 
   // What the project depends on: the accounts its services use, then the
   // accounts those sign in through (Vercel signs in with GitHub, say).
   const used = new Map<number, AccountSummary>()
   for (const service of projectServices) {
-    const account = accounts.find((a) => a.id === service.accountId)
-    if (account) used.set(account.id, account)
+    for (const { account } of accountViews(service)) used.set(account.id, account)
   }
   const through = new Map<number, { account: AccountSummary; for: string[] }>()
   for (const account of used.values()) {
@@ -239,19 +253,15 @@ export default function ProjectPage(): React.ReactElement {
               }
             >
               <ListFrame footer={projectServices.length > 0 ? plural(projectServices.length, 'service') : undefined}>
-                {projectServices.map((service) => {
-                  const account = accounts.find((a) => a.id === service.accountId)
-                  return (
-                    <ServiceRow
-                      key={service.id}
-                      service={service}
-                      account={account}
-                      relations={account ? relationsOf(account.id) : undefined}
-                      onEdit={() => setModal({ open: true, kind: 'service', service })}
-                      onDelete={() => void removeService(service)}
-                    />
-                  )
-                })}
+                {projectServices.map((service) => (
+                  <ServiceRow
+                    key={service.id}
+                    service={service}
+                    accounts={accountViews(service)}
+                    onEdit={() => setModal({ open: true, kind: 'service', service })}
+                    onDelete={() => void removeService(service)}
+                  />
+                ))}
                 {projectServices.length === 0 && (
                   <EmptyLine title="No services yet.">
                     Add what this project runs on (hosting, database, email…) and the account each one uses.
@@ -292,7 +302,7 @@ export default function ProjectPage(): React.ReactElement {
               id="section-files"
               title="Files"
               action={
-                <Button size="md" onClick={() => void addFiles()}>
+                <Button size="md" onClick={addFiles}>
                   <FilePlus size={14} />
                   Add files
                 </Button>
@@ -360,19 +370,23 @@ export default function ProjectPage(): React.ReactElement {
         open={modal.open}
         onOpenChange={(open) => !open && closeModal()}
         title={
-          modal.kind === 'service'
-            ? modal.service
-              ? 'Edit service'
-              : 'Add service'
-            : modal.secret
-              ? modal.secret.kind === 'file'
-                ? 'Rename or move file'
-                : 'Edit secret'
-              : 'Add secret'
+          modal.kind === 'upload'
+            ? 'Add files'
+            : modal.kind === 'service'
+              ? modal.service
+                ? 'Edit service'
+                : 'Add service'
+              : modal.secret
+                ? modal.secret.kind === 'file'
+                  ? 'Edit file'
+                  : 'Edit secret'
+                : 'Add secret'
         }
         description={project.name}
       >
-        {modal.kind === 'service' ? (
+        {modal.kind === 'upload' ? (
+          <UploadFiles projectId={project.id} services={projectServices} incoming={modal.incoming} onDone={closeModal} />
+        ) : modal.kind === 'service' ? (
           <ServiceForm
             key={modal.service?.id ?? 'new'}
             projectId={project.id}

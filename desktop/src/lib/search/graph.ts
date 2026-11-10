@@ -190,7 +190,8 @@ export function buildGraph(input: GraphInput): VaultGraph {
       title: secret.name,
       subtitle: `${secret.kind === 'file' ? 'File' : 'Secret'} in ${projectName.get(secret.projectId) ?? 'a project'}`,
       to: `/projects/${secret.projectId}?show=${secret.kind === 'file' ? 'files' : 'secrets'}`,
-      terms: terms(secret.name, 1)
+      // Its description too: "the root ssh key" finds id_ed25519 described that way.
+      terms: [...terms(secret.name, 1), ...terms(secret.description, 0.5)]
     })
   }
 
@@ -208,6 +209,9 @@ export function buildGraph(input: GraphInput): VaultGraph {
   }
   for (const l of input.deviceLinks) {
     link(`account:${l.accountId}`, `device:${l.deviceId}`, 'signed in on', 'signed in to')
+    // What it does there ("authenticator") names both ends a little.
+    nodes.get(`account:${l.accountId}`)?.terms.push(...terms(l.note, 0.4))
+    nodes.get(`device:${l.deviceId}`)?.terms.push(...terms(l.note, 0.4))
   }
   for (const secret of input.accountSecrets) {
     const kind = secret.kind === 'note' ? 'note' : 'account-secret'
@@ -215,7 +219,12 @@ export function buildGraph(input: GraphInput): VaultGraph {
   }
   for (const service of input.services) {
     link(`project:${service.projectId}`, `service:${service.id}`, 'has service', 'in project')
-    if (service.accountId) link(`service:${service.id}`, `account:${service.accountId}`, 'uses account', 'used by')
+    // Every account it uses ("coolify account" finds them all), and the role each has
+    // there as a word of that account ("coolify admin" finds the admin one).
+    for (const { accountId, role } of service.accounts) {
+      link(`service:${service.id}`, `account:${accountId}`, 'uses account', 'used by')
+      nodes.get(`account:${accountId}`)?.terms.push(...terms(role, 0.7))
+    }
   }
   for (const secret of input.secrets) {
     const id = `${secret.kind === 'file' ? 'file' : 'project-secret'}:${secret.id}`

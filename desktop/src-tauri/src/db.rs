@@ -96,6 +96,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "account-categories",
         sql: include_str!("migrations/0004_account_categories.sql"),
     },
+    Migration {
+        version: 5,
+        name: "service-accounts-roles-descriptions-device-notes",
+        sql: include_str!("migrations/0005_roles_and_descriptions.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.
@@ -519,6 +524,52 @@ mod tests {
             (version, value.as_str(), journal.as_str()),
             (1, "kept", "delete")
         );
+    }
+
+    /// v5 on a vault written by v4: every service keeps its account (now its first in
+    /// `service_accounts`), every other row is untouched, and a backup is made first.
+    #[test]
+    fn v5_keeps_each_services_account() {
+        let (directory, path) = temp_db();
+        let v4 = VaultDatabase::open_with(&path, &MIGRATIONS[..4], None).unwrap();
+        v4.connection()
+            .execute_batch(
+                "INSERT INTO domains (name, created_at, updated_at) VALUES ('coolify.io', 't', 't');
+                 INSERT INTO credentials (domain_id, username, email, password, created_at, updated_at, last_time_used)
+                   VALUES (1, NULL, 'me@example.com', 'sealed', 't', 't', 't');
+                 INSERT INTO projects (name, description, created_at, updated_at) VALUES ('Acme', '', 't', 't');
+                 INSERT INTO services (project_id, name, url, account_id, created_at, updated_at)
+                   VALUES (1, 'Coolify', '', 1, 't0', 't1'), (1, 'Vercel', '', NULL, 't', 't');
+                 INSERT INTO secrets (project_id, service_id, kind, name, mime_type, size, payload, created_at, updated_at)
+                   VALUES (1, 1, 'text', 'TOKEN', 'text/plain', 3, x'00', 't', 't');
+                 INSERT INTO devices (name, kind, notes, created_at, updated_at) VALUES ('iPhone', 'phone', '', 't', 't');
+                 INSERT INTO account_devices (account_id, device_id, created_at) VALUES (1, 1, 't');",
+            )
+            .unwrap();
+        v4.close();
+
+        let v5 = VaultDatabase::open(&path).unwrap();
+        assert_eq!(v5.schema_version().unwrap(), 5);
+        let conn = v5.connection();
+        let linked: Vec<(i64, i64, Option<Vec<u8>>, i64, String)> = conn
+            .prepare("SELECT service_id, account_id, role, position, created_at FROM service_accounts")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(linked, vec![(1, 1, None, 0, "t0".to_owned())], "Coolify keeps its account; Vercel had none");
+        let (old_column, description, note): (Option<i64>, Option<Vec<u8>>, Option<Vec<u8>>) = conn
+            .query_row(
+                "SELECT s.account_id, x.description, d.note
+                 FROM services s, secrets x, account_devices d WHERE s.id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((old_column, description, note), (Some(1), None, None), "existing rows untouched");
+        v5.close();
+        assert!(directory.path().join("backups").read_dir().unwrap().next().is_some(), "backed up first");
     }
 
     #[test]

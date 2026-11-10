@@ -44,6 +44,11 @@ zeroize = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# Native two-finger back/forward swipe on macOS (WKWebView), which Tauri doesn't
+# expose: the same crate and features wry already builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "WKWebView"] }
+
 [dev-dependencies]
 tempfile = "3"
 hex = "0.4"

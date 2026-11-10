@@ -114,14 +114,14 @@ export interface AccountRelations {
   recoveredBy: AccountSummary[]
   /** Accounts this one is the recovery account for. */
   recovers: AccountSummary[]
-  /** Services (and their projects) that use this account. */
-  services: { service: Service; project: Project }[]
+  /** Services (and their projects) that use this account, and its role there. */
+  services: { service: Service; project: Project; role: string }[]
   /** Second steps and recovery codes. */
   factors: Factor[]
   /** Secrets and notes kept with it. */
   secrets: AccountSecretMeta[]
-  /** Devices it is signed in on. */
-  devices: Device[]
+  /** Devices it is signed in on, and what it does there. */
+  devices: (Device & { note: string })[]
 }
 
 export function useRelations(): (accountId: number) => AccountRelations {
@@ -144,16 +144,17 @@ export function useRelations(): (accountId: number) => AccountRelations {
       usedBy: linked(accountId, 'sign_in', true),
       recoveredBy: linked(accountId, 'recovery', false),
       recovers: linked(accountId, 'recovery', true),
-      services: services
-        .filter((s) => s.accountId === accountId)
-        .map((service) => ({ service, project: projectById.get(service.projectId)! }))
-        .filter((entry) => !!entry.project),
+      services: services.flatMap((service) => {
+        const use = service.accounts.find((a) => a.accountId === accountId)
+        const project = projectById.get(service.projectId)
+        return use && project ? [{ service, project, role: use.role }] : []
+      }),
       factors: factors.filter((f) => f.accountId === accountId),
       secrets: secrets.filter((s) => s.accountId === accountId),
-      devices: deviceLinks
-        .filter((l) => l.accountId === accountId)
-        .map((l) => deviceById.get(l.deviceId))
-        .filter(present)
+      devices: deviceLinks.flatMap((l) => {
+        const device = l.accountId === accountId ? deviceById.get(l.deviceId) : undefined
+        return device ? [{ ...device, note: l.note }] : []
+      })
     })
   }, [accounts, links, services, projects, factors, secrets, devices, deviceLinks])
 }
@@ -161,7 +162,8 @@ export function useRelations(): (accountId: number) => AccountRelations {
 /** What depends on a device: the second steps that live on it and the accounts signed in on it. */
 export interface DeviceUsage {
   steps: { factor: Factor; account: AccountSummary }[]
-  signedIn: AccountSummary[]
+  /** Accounts signed in on it, and what each does there. */
+  signedIn: (AccountSummary & { note: string })[]
   /** Accounts whose only second step is on this device, with no recovery codes or recovery account saved. */
   noBackup: AccountSummary[]
 }
@@ -177,10 +179,10 @@ export function useDeviceUsage(): (deviceId: number) => DeviceUsage {
         .filter((f) => f.deviceId === deviceId)
         .map((factor) => ({ factor, account: byId.get(factor.accountId) }))
         .filter((s): s is { factor: Factor; account: AccountSummary } => !!s.account)
-      const signedIn = deviceLinks
-        .filter((l) => l.deviceId === deviceId)
-        .map((l) => byId.get(l.accountId))
-        .filter((a): a is AccountSummary => !!a)
+      const signedIn = deviceLinks.flatMap((l) => {
+        const account = l.deviceId === deviceId ? byId.get(l.accountId) : undefined
+        return account ? [{ ...account, note: l.note }] : []
+      })
       const noBackup = [...new Map(steps.map((s) => [s.account.id, s.account])).values()].filter((account) => {
         const own = factors.filter((f) => f.accountId === account.id)
         const elsewhere = own.some((f) => f.kind === 'recovery_codes' || f.deviceId !== deviceId)

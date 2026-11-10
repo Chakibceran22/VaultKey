@@ -77,10 +77,10 @@ const projects = [
   { id: 3, name: 'Side quest', description: '', createdAt: iso(5), updatedAt: iso(5) }
 ]
 const services = [
-  { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.acme.dev', accountId: 7 as number | null, createdAt: iso(40), updatedAt: iso(3) },
-  { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/acme', accountId: 5 as number | null, createdAt: iso(39), updatedAt: iso(9) },
-  { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/acme', accountId: null as number | null, createdAt: iso(38), updatedAt: iso(12) },
-  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accountId: 1 as number | null, createdAt: iso(90), updatedAt: iso(30) }
+  { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.acme.dev', accounts: [{ accountId: 7, role: 'admin, server owner' }, { accountId: 22, role: 'billing' }], createdAt: iso(40), updatedAt: iso(3) },
+  { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/acme', accounts: [{ accountId: 5, role: '' }], createdAt: iso(39), updatedAt: iso(9) },
+  { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/acme', accounts: [] as { accountId: number; role: string }[], createdAt: iso(38), updatedAt: iso(12) },
+  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) }
 ]
 const secretValues = new Map<number, string>([
   [1, 'sk_live_51Hx0aBcDeFgHiJkLmNoPqRsTuVwXyZ'],
@@ -90,12 +90,12 @@ const secretValues = new Map<number, string>([
   [5, 'DATABASE_URL=postgres://localhost/acme\nSTRIPE_KEY=sk_test_123\n']
 ])
 const secrets = [
-  { id: 1, projectId: 1, serviceId: null as number | null, kind: 'text', name: 'STRIPE_SECRET_KEY', mimeType: 'text/plain', size: 32, createdAt: iso(30), updatedAt: iso(4) },
-  { id: 2, projectId: 1, serviceId: 3 as number | null, kind: 'text', name: 'DATABASE_URL', mimeType: 'text/plain', size: 46, createdAt: iso(30), updatedAt: iso(12) },
-  { id: 3, projectId: 1, serviceId: null as number | null, kind: 'text', name: 'RESEND_API_KEY', mimeType: 'text/plain', size: 18, createdAt: iso(20), updatedAt: iso(20) },
-  { id: 4, projectId: 1, serviceId: 1 as number | null, kind: 'file', name: 'id_ed25519', mimeType: 'application/octet-stream', size: 411, createdAt: iso(25), updatedAt: iso(25) },
-  { id: 5, projectId: 1, serviceId: null as number | null, kind: 'file', name: 'production.env', mimeType: 'text/plain', size: 64, createdAt: iso(10), updatedAt: iso(10) },
-  { id: 6, projectId: 1, serviceId: null as number | null, kind: 'file', name: 'logo.png', mimeType: 'image/png', size: 48213, createdAt: iso(8), updatedAt: iso(8) }
+  { id: 1, projectId: 1, serviceId: null as number | null, kind: 'text', name: 'STRIPE_SECRET_KEY', mimeType: 'text/plain', size: 32, description: 'Live mode, full access', createdAt: iso(30), updatedAt: iso(4) },
+  { id: 2, projectId: 1, serviceId: 3 as number | null, kind: 'text', name: 'DATABASE_URL', mimeType: 'text/plain', size: 46, description: '', createdAt: iso(30), updatedAt: iso(12) },
+  { id: 3, projectId: 1, serviceId: null as number | null, kind: 'text', name: 'RESEND_API_KEY', mimeType: 'text/plain', size: 18, description: '', createdAt: iso(20), updatedAt: iso(20) },
+  { id: 4, projectId: 1, serviceId: 1 as number | null, kind: 'file', name: 'id_ed25519', mimeType: 'application/octet-stream', size: 411, description: 'Deploy key for the Coolify server', createdAt: iso(25), updatedAt: iso(25) },
+  { id: 5, projectId: 1, serviceId: null as number | null, kind: 'file', name: 'production.env', mimeType: 'text/plain', size: 64, description: '', createdAt: iso(10), updatedAt: iso(10) },
+  { id: 6, projectId: 1, serviceId: null as number | null, kind: 'file', name: 'logo.png', mimeType: 'image/png', size: 48213, description: '', createdAt: iso(8), updatedAt: iso(8) }
 ]
 const links = [
   { accountId: 5, linkedAccountId: 1, kind: 'sign_in' },
@@ -139,15 +139,16 @@ const accountSecretValues = new Map<number, string>([
   [2, 'Recovery email is the Gmail account. The SSH key for pushes lives on the MacBook.\nOrg owner of alex-labs.'],
   [3, 'vc_preview_0nly_made_up']
 ])
+const staged: { token: number; name: string; size: number }[] = []
 const deviceLinks = [
-  { accountId: 1, deviceId: 2 },
-  { accountId: 1, deviceId: 1 },
-  { accountId: 7, deviceId: 1 },
-  { accountId: 7, deviceId: 2 },
-  { accountId: 7, deviceId: 4 },
-  { accountId: 10, deviceId: 1 },
-  { accountId: 10, deviceId: 2 },
-  { accountId: 10, deviceId: 4 }
+  { accountId: 1, deviceId: 2, note: 'git over SSH, passkey' },
+  { accountId: 1, deviceId: 1, note: 'GitHub Mobile, authenticator' },
+  { accountId: 7, deviceId: 1, note: '' },
+  { accountId: 7, deviceId: 2, note: '' },
+  { accountId: 7, deviceId: 4, note: '' },
+  { accountId: 10, deviceId: 1, note: '' },
+  { accountId: 10, deviceId: 2, note: '' },
+  { accountId: 10, deviceId: 4, note: '' }
 ]
 
 /** Real RFC 6238 codes, so the preview's live code behaves like the app's. */
@@ -270,6 +271,7 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       removeWhere(factors, (f) => gone(f.accountId))
       removeWhere(accountSecrets, (x) => gone(x.accountId))
       removeWhere(deviceLinks, (l) => gone(l.accountId))
+      for (const service of services) service.accounts = service.accounts.filter((a) => !gone(a.accountId))
       return null
     }
     case 'load_workspace':
@@ -293,9 +295,9 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     }
     case 'create_service': {
-      const input = args.input as { name: string; url?: string; accountId?: number | null }
+      const input = args.input as { name: string; url?: string; accounts?: { accountId: number; role: string }[] }
       const id = nextId++
-      services.push({ id, projectId: args.projectId as number, name: input.name, url: input.url ?? '', accountId: input.accountId ?? null, createdAt: iso(0), updatedAt: iso(0) })
+      services.push({ id, projectId: args.projectId as number, name: input.name, url: input.url ?? '', accounts: input.accounts ?? [], createdAt: iso(0), updatedAt: iso(0) })
       return { id }
     }
     case 'update_service': {
@@ -310,18 +312,19 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     }
     case 'create_secret': {
-      const input = args.input as { name: string; value: string; serviceId?: number | null }
+      const input = args.input as { name: string; value: string; serviceId?: number | null; description?: string }
       const id = nextId++
       secretValues.set(id, input.value)
-      secrets.push({ id, projectId: args.projectId as number, serviceId: input.serviceId ?? null, kind: 'text', name: input.name, mimeType: 'text/plain', size: input.value.length, createdAt: iso(0), updatedAt: iso(0) })
+      secrets.push({ id, projectId: args.projectId as number, serviceId: input.serviceId ?? null, kind: 'text', name: input.name, mimeType: 'text/plain', size: input.value.length, description: input.description ?? '', createdAt: iso(0), updatedAt: iso(0) })
       return { id }
     }
     case 'update_secret': {
       const secret = secrets.find((x) => x.id === args.secretId)
       if (!secret) fail('NOT_FOUND', 'Secret not found.')
-      const input = args.input as { name: string; serviceId?: number | null; value?: string }
+      const input = args.input as { name: string; serviceId?: number | null; value?: string; description?: string }
       secret.name = input.name
       secret.serviceId = input.serviceId ?? null
+      if (input.description !== undefined) secret.description = input.description
       if (input.value) secretValues.set(secret.id, input.value)
       secret.updatedAt = iso(0)
       return null
@@ -337,12 +340,32 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       secrets.splice(at, 1)
       return null
     }
-    case 'import_files':
-    case 'import_dropped_files': {
-      const id = nextId++
-      secretValues.set(id, 'preview file')
-      secrets.push({ id, projectId: args.projectId as number, serviceId: null, kind: 'file', name: `cert-${id}.pem`, mimeType: 'application/x-pem-file', size: 1834, createdAt: iso(0), updatedAt: iso(0) })
-      return { imported: [id], skipped: [] }
+    // The upload dialog. The browser has no native picker here: "choosing" adds two made-up files.
+    case 'stage_files':
+    case 'stage_dropped_files': {
+      for (const name of ['deploy_key', 'staging.env']) {
+        staged.push({ token: nextId++, name: `${name}-${nextId}`, size: name.length * 97 })
+      }
+      return { files: staged, skipped: [] }
+    }
+    case 'unstage_file':
+      removeWhere(staged, (f) => f.token === args.token)
+      return { files: staged, skipped: [] }
+    case 'clear_staged_files':
+      staged.length = 0
+      return null
+    case 'import_staged_files': {
+      const imported: number[] = []
+      for (const { token, description } of args.files as { token: number; description: string }[]) {
+        const file = staged.find((f) => f.token === token)
+        if (!file) fail('INVALID_INPUT', 'A file is no longer in the list. Add it again.')
+        const id = nextId++
+        secretValues.set(id, 'preview file')
+        secrets.push({ id, projectId: args.projectId as number, serviceId: (args.serviceId as number | null) ?? null, kind: 'file', name: file.name, mimeType: 'text/plain', size: file.size, description, createdAt: iso(0), updatedAt: iso(0) })
+        imported.push(id)
+      }
+      removeWhere(staged, (f) => imported.length > 0 && (args.files as { token: number }[]).some((x) => x.token === f.token))
+      return { imported, skipped: [] }
     }
     case 'export_secret':
       return { saved: true }
@@ -433,7 +456,7 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       for (const id of args.signIn as number[]) links.push({ accountId, linkedAccountId: id, kind: 'sign_in' })
       for (const id of args.recovery as number[]) links.push({ accountId, linkedAccountId: id, kind: 'recovery' })
       removeWhere(deviceLinks, (l) => l.accountId === accountId)
-      for (const deviceId of args.deviceIds as number[]) deviceLinks.push({ accountId, deviceId })
+      for (const { deviceId, note } of args.devices as { deviceId: number; note: string }[]) deviceLinks.push({ accountId, deviceId, note })
       return null
     }
     case 'set_account_category': {
@@ -444,8 +467,9 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     }
     case 'set_account_devices': {
+      const kept = new Map(deviceLinks.filter((l) => l.accountId === args.accountId).map((l) => [l.deviceId, l.note]))
       removeWhere(deviceLinks, (l) => l.accountId === args.accountId)
-      for (const deviceId of args.deviceIds as number[]) deviceLinks.push({ accountId: args.accountId as number, deviceId })
+      for (const deviceId of args.deviceIds as number[]) deviceLinks.push({ accountId: args.accountId as number, deviceId, note: kept.get(deviceId) ?? '' })
       return null
     }
     case 'plugin:clipboard-manager|write_text':

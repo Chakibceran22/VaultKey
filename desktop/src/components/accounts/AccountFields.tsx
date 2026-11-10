@@ -192,9 +192,9 @@ export function AccountFields({
             {devices.some((d) => d.kind !== 'security_key') ? (
               <div role="group" aria-labelledby="signed-in-on" className="flex flex-wrap gap-1.5">
                 {devices
-                  .filter((d) => d.kind !== 'security_key' || draft.deviceIds.includes(d.id))
+                  .filter((d) => d.kind !== 'security_key' || draft.devices.some((l) => l.deviceId === d.id))
                   .map((device) => {
-                  const on = draft.deviceIds.includes(device.id)
+                  const on = draft.devices.some((l) => l.deviceId === device.id)
                   const DeviceIcon = DEVICES[device.kind].icon
                   return (
                     <button
@@ -202,7 +202,12 @@ export function AccountFields({
                       type="button"
                       aria-pressed={on}
                       onClick={() =>
-                        set('deviceIds', on ? draft.deviceIds.filter((id) => id !== device.id) : [...draft.deviceIds, device.id])
+                        set(
+                          'devices',
+                          on
+                            ? draft.devices.filter((l) => l.deviceId !== device.id)
+                            : [...draft.devices, { deviceId: device.id, note: '' }]
+                        )
                       }
                       className={cn(
                         'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[13px] transition-colors duration-150',
@@ -219,6 +224,37 @@ export function AccountFields({
               </div>
             ) : (
               <p className="text-[12.5px] text-muted-foreground">No devices yet. Add your phone and computers under Devices.</p>
+            )}
+            {/* What it does on each device it is signed in on (kept encrypted). */}
+            {draft.devices.length > 0 && (
+              <ul className="space-y-1.5 pt-1">
+                {draft.devices.map((link) => {
+                  const device = devices.find((d) => d.id === link.deviceId)
+                  if (!device) return null
+                  const DeviceIcon = DEVICES[device.kind].icon
+                  return (
+                    <li key={link.deviceId} className="flex items-center gap-2">
+                      <span className="flex w-32 shrink-0 items-center gap-1.5 truncate text-[12.5px] text-muted-foreground">
+                        <DeviceIcon size={13} className="shrink-0" />
+                        <span className="truncate">{device.name}</span>
+                      </span>
+                      <Input
+                        aria-label={`What it does on ${device.name}`}
+                        placeholder="What it does there: app, authenticator…"
+                        value={link.note}
+                        maxLength={200}
+                        onChange={(e) =>
+                          set(
+                            'devices',
+                            draft.devices.map((l) => (l.deviceId === link.deviceId ? { ...l, note: e.target.value } : l))
+                          )
+                        }
+                        className="h-8 text-[13px]"
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
             )}
           </div>
         </>

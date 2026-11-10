@@ -58,6 +58,12 @@ impl Graph {
         self.edges.push(Vec::new());
     }
 
+    fn add_terms(&mut self, id: &str, extra: Vec<Term>) {
+        if let Some(i) = self.find(id) {
+            self.nodes[i].terms.extend(extra);
+        }
+    }
+
     /// Both directions, each with its own wording.
     fn link(&mut self, from: &str, to: &str, forward: &'static str, back: &'static str) {
         let (Some(a), Some(b)) = (self.find(from), self.find(to)) else { return };
@@ -137,13 +143,17 @@ pub fn build(vault: &Vault) -> Graph {
         let subtitle = format!("Service in {}", project.unwrap_or("a project"));
         let mut t = terms(&s.name, 1.0);
         t.extend(terms(&s.url, 0.7));
-        let account = s.account_id.and_then(|id| account_name.get(&id).copied());
         let mut text = format!("{}: service of the project {}", s.name, project.unwrap_or("?"));
         if !s.url.is_empty() {
             text += &format!(", at {}", host(&s.url));
         }
-        if let Some(account) = account {
-            text += &format!(", signed in with the {account} account");
+        for (id, role) in s.uses() {
+            if let Some(account) = account_name.get(&id) {
+                text += &format!(", signed in with the {account} account");
+                if !role.is_empty() {
+                    text += &format!(" ({role})");
+                }
+            }
         }
         g.add(
             node(format!("service:{}", s.id), NodeKind::Service, &s.name, subtitle, format!("/projects/{}?show=services", s.project_id), None),
@@ -202,8 +212,14 @@ pub fn build(vault: &Vault) -> Graph {
         if let Some(service) = s.service_id.and_then(|id| service_name.get(&id)) {
             text += &format!(", for {service}");
         }
+        if !s.description.is_empty() {
+            text += &format!(". {}", s.description);
+        }
         let to = format!("/projects/{}?show={}", s.project_id, if file { "files" } else { "secrets" });
-        g.add(node(format!("{}:{}", kind.as_str(), s.id), kind, &s.name, subtitle, to, None), terms(&s.name, 1.0), text);
+        // Its description too: "the root ssh key" finds id_ed25519 described that way.
+        let mut t = terms(&s.name, 1.0);
+        t.extend(terms(&s.description, 0.5));
+        g.add(node(format!("{}:{}", kind.as_str(), s.id), kind, &s.name, subtitle, to, None), t, text);
     }
 
     // Relations, worded from each side.
@@ -221,7 +237,11 @@ pub fn build(vault: &Vault) -> Graph {
         }
     }
     for l in &vault.device_links {
-        g.link(&format!("account:{}", l.account_id), &format!("device:{}", l.device_id), "signed in on", "signed in to");
+        let (account, device) = (format!("account:{}", l.account_id), format!("device:{}", l.device_id));
+        g.link(&account, &device, "signed in on", "signed in to");
+        // What it does there ("authenticator") names both ends a little.
+        g.add_terms(&account, terms(&l.note, 0.4));
+        g.add_terms(&device, terms(&l.note, 0.4));
     }
     for s in &vault.account_secrets {
         let kind = if s.kind == "note" { "note" } else { "account-secret" };
@@ -229,8 +249,11 @@ pub fn build(vault: &Vault) -> Graph {
     }
     for s in &vault.services {
         g.link(&format!("project:{}", s.project_id), &format!("service:{}", s.id), "has service", "in project");
-        if let Some(account) = s.account_id {
+        // Every account it uses ("coolify account" finds them all), and the role each
+        // has there as a word of that account ("coolify admin" finds the admin one).
+        for (account, role) in s.uses() {
             g.link(&format!("service:{}", s.id), &format!("account:{account}"), "uses account", "used by");
+            g.add_terms(&format!("account:{account}"), terms(role, 0.7));
         }
     }
     for s in &vault.secrets {

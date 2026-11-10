@@ -1,7 +1,10 @@
-//! Schema v2: projects, the services they use, their encrypted secrets and files,
-//! and links between accounts. SQL only; encryption and the unlock guard live in
+//! Schema v2 and v5: projects, the services they use (several accounts each, with a
+//! sealed role), their encrypted secrets and files (with a sealed description), and
+//! links between accounts. SQL only; encryption and the unlock guard live in
 //! `vault.rs`. Secret payloads never leave this module except through
 //! `secret_payload` (for decryption) — listings carry metadata only.
+
+use std::collections::HashMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -19,6 +22,21 @@ pub struct Project {
     pub updated_at: String,
 }
 
+/// A note sealed with the vault key (`crypto::encrypt_bytes`), or `None` for no note.
+pub type Sealed = Option<Vec<u8>>;
+
+/// Opens a sealed note: "" for none. Given by `vault.rs`, which holds the key.
+pub type Open<'a> = &'a dyn Fn(Sealed) -> VaultResult<String>;
+
+/// An account a service uses, and what it is for there.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccount {
+    pub account_id: i64,
+    /// "admin", "deploy only"…; empty for none. Stored sealed.
+    pub role: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
@@ -26,7 +44,8 @@ pub struct Service {
     pub project_id: i64,
     pub name: String,
     pub url: String,
-    pub account_id: Option<i64>,
+    /// In order; the first is the main one.
+    pub accounts: Vec<ServiceAccount>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -43,6 +62,8 @@ pub struct SecretMeta {
     pub name: String,
     pub mime_type: String,
     pub size: i64,
+    /// What it's for, its scopes; empty for none. Stored sealed.
+    pub description: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -77,7 +98,7 @@ pub(crate) fn renamed(error: VaultError, message: &str) -> VaultError {
     }
 }
 
-pub fn load_workspace(conn: &Connection) -> VaultResult<Workspace> {
+pub fn load_workspace(conn: &Connection, open: Open<'_>) -> VaultResult<Workspace> {
     let projects = conn
         .prepare_cached(
             "SELECT id, name, description, created_at, updated_at
@@ -93,9 +114,23 @@ pub fn load_workspace(conn: &Connection) -> VaultResult<Workspace> {
             })
         })?
         .collect::<Result<_, _>>()?;
+    let mut accounts: HashMap<i64, Vec<ServiceAccount>> = HashMap::new();
+    let rows: Vec<(i64, i64, Sealed)> = conn
+        .prepare_cached(
+            "SELECT service_id, account_id, role FROM service_accounts
+             ORDER BY service_id, position, account_id",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    for (service_id, account_id, role) in rows {
+        accounts.entry(service_id).or_default().push(ServiceAccount {
+            account_id,
+            role: open(role)?,
+        });
+    }
     let services = conn
         .prepare_cached(
-            "SELECT id, project_id, name, url, account_id, created_at, updated_at
+            "SELECT id, project_id, name, url, created_at, updated_at
              FROM services ORDER BY name COLLATE NOCASE, id",
         )?
         .query_map([], |row| {
@@ -104,31 +139,48 @@ pub fn load_workspace(conn: &Connection) -> VaultResult<Workspace> {
                 project_id: row.get(1)?,
                 name: row.get(2)?,
                 url: row.get(3)?,
-                account_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
+                accounts: Vec::new(),
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
             })
         })?
-        .collect::<Result<_, _>>()?;
-    let secrets = conn
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|mut service| {
+            service.accounts = accounts.remove(&service.id).unwrap_or_default();
+            service
+        })
+        .collect();
+    let rows: Vec<(SecretMeta, Sealed)> = conn
         .prepare_cached(
-            "SELECT id, project_id, service_id, kind, name, mime_type, size, created_at, updated_at
+            "SELECT id, project_id, service_id, kind, name, mime_type, size, created_at, updated_at, description
              FROM secrets ORDER BY name COLLATE NOCASE, id",
         )?
         .query_map([], |row| {
-            Ok(SecretMeta {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                service_id: row.get(2)?,
-                kind: row.get(3)?,
-                name: row.get(4)?,
-                mime_type: row.get(5)?,
-                size: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-            })
+            Ok((
+                SecretMeta {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    service_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    name: row.get(4)?,
+                    mime_type: row.get(5)?,
+                    size: row.get(6)?,
+                    description: String::new(),
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                },
+                row.get(9)?,
+            ))
         })?
         .collect::<Result<_, _>>()?;
+    let secrets = rows
+        .into_iter()
+        .map(|(mut secret, description)| {
+            secret.description = open(description)?;
+            Ok(secret)
+        })
+        .collect::<VaultResult<_>>()?;
     Ok(Workspace {
         projects,
         services,
@@ -223,23 +275,51 @@ pub fn delete_project(conn: &Connection, id: i64) -> VaultResult<()> {
 
 // ── services ────────────────────────────────────────────────────────────────
 
+/// Inside a transaction: replaces the accounts a service uses, in order, each with
+/// its sealed role. Ids are checked to exist. `services.account_id` (pre-v5) is kept
+/// equal to the first.
+fn replace_service_accounts(
+    tx: &Connection,
+    service_id: i64,
+    accounts: &[(i64, Sealed)],
+    now: &str,
+) -> VaultResult<()> {
+    for (account_id, _) in accounts {
+        require_account(tx, *account_id)?;
+    }
+    tx.execute(
+        "DELETE FROM service_accounts WHERE service_id = ?1",
+        [service_id],
+    )?;
+    for (position, (account_id, role)) in accounts.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO service_accounts (service_id, account_id, role, position, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![service_id, account_id, role, position as i64, now],
+        )?;
+    }
+    tx.execute(
+        "UPDATE services SET account_id = ?1 WHERE id = ?2",
+        params![accounts.first().map(|(id, _)| *id), service_id],
+    )?;
+    Ok(())
+}
+
+/// The accounts are `(account id, sealed role)`, distinct, in order.
 pub fn create_service(
     database: &mut VaultDatabase,
     project_id: i64,
     name: &str,
     url: &str,
-    account_id: Option<i64>,
+    accounts: &[(i64, Sealed)],
 ) -> VaultResult<i64> {
     let now = now_iso();
     database.transaction(|tx| {
         require_project(tx, project_id)?;
-        if let Some(account_id) = account_id {
-            require_account(tx, account_id)?;
-        }
         tx.execute(
             "INSERT INTO services (project_id, name, url, account_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![project_id, name, url, account_id, now],
+             VALUES (?1, ?2, ?3, NULL, ?4, ?4)",
+            params![project_id, name, url, now],
         )
         .map_err(|e| {
             renamed(
@@ -247,7 +327,9 @@ pub fn create_service(
                 "This project already has a service with that name.",
             )
         })?;
-        Ok(tx.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        replace_service_accounts(tx, id, accounts, &now)?;
+        Ok(id)
     })
 }
 
@@ -256,20 +338,18 @@ pub fn update_service(
     id: i64,
     name: &str,
     url: &str,
-    account_id: Option<i64>,
+    accounts: &[(i64, Sealed)],
 ) -> VaultResult<()> {
     let now = now_iso();
     database.transaction(|tx| {
-        if let Some(account_id) = account_id {
-            require_account(tx, account_id)?;
-        }
         let rows = tx
             .execute(
-                "UPDATE services SET name = ?1, url = ?2, account_id = ?3, updated_at = ?4 WHERE id = ?5",
-                params![name, url, account_id, now, id],
+                "UPDATE services SET name = ?1, url = ?2, updated_at = ?3 WHERE id = ?4",
+                params![name, url, now, id],
             )
             .map_err(|e| renamed(e.into(), "This project already has a service with that name."))?;
-        changed(rows, "Service")
+        changed(rows, "Service")?;
+        replace_service_accounts(tx, id, accounts, &now)
     })
 }
 
@@ -291,6 +371,7 @@ pub struct NewSecret<'a> {
     pub mime_type: &'a str,
     pub size: i64,
     pub payload: &'a [u8],
+    pub description: Option<&'a [u8]>,
 }
 
 pub fn insert_secret(database: &mut VaultDatabase, secret: NewSecret<'_>) -> VaultResult<i64> {
@@ -299,8 +380,8 @@ pub fn insert_secret(database: &mut VaultDatabase, secret: NewSecret<'_>) -> Vau
         require_project(tx, secret.project_id)?;
         require_service_in(tx, secret.service_id, secret.project_id)?;
         tx.execute(
-            "INSERT INTO secrets (project_id, service_id, kind, name, mime_type, size, payload, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            "INSERT INTO secrets (project_id, service_id, kind, name, mime_type, size, payload, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
             params![
                 secret.project_id,
                 secret.service_id,
@@ -309,6 +390,7 @@ pub fn insert_secret(database: &mut VaultDatabase, secret: NewSecret<'_>) -> Vau
                 secret.mime_type,
                 secret.size,
                 secret.payload,
+                secret.description,
                 now
             ],
         )?;
@@ -340,13 +422,15 @@ pub fn secret_payload(conn: &Connection, id: i64) -> VaultResult<StoredSecret> {
     .ok_or_else(|| VaultError::not_found("Secret not found."))
 }
 
-/// Renames / re-attaches a secret, and replaces its sealed value when given one.
+/// Renames / re-attaches a secret, and replaces its sealed value and its sealed
+/// description when given (`Some(None)` clears the description).
 pub fn update_secret(
     database: &mut VaultDatabase,
     id: i64,
     name: &str,
     service_id: Option<i64>,
     value: Option<(&[u8], i64)>,
+    description: Option<Option<&[u8]>>,
 ) -> VaultResult<()> {
     let now = now_iso();
     database.transaction(|tx| {
@@ -367,6 +451,12 @@ pub fn update_secret(
             tx.execute(
                 "UPDATE secrets SET payload = ?1, size = ?2 WHERE id = ?3",
                 params![payload, size, id],
+            )?;
+        }
+        if let Some(description) = description {
+            tx.execute(
+                "UPDATE secrets SET description = ?1 WHERE id = ?2",
+                params![description, id],
             )?;
         }
         Ok(())

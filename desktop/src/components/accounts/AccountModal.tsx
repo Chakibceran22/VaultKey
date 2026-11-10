@@ -62,7 +62,9 @@ export function AccountModal({
       category: account.category ?? '',
       signInWith,
       recoveryBy: linked('recovery'),
-      deviceIds: deviceLinks.filter((l) => l.accountId === account.id).map((l) => l.deviceId)
+      devices: deviceLinks
+        .filter((l) => l.accountId === account.id)
+        .map((l) => ({ deviceId: l.deviceId, note: l.note }))
     }
   }
   // While closing, keep showing the form that was open (the password is no

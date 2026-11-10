@@ -368,7 +368,7 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
                   items={relations.devices.map((d) => ({
                     key: `dev-${d.id}`,
                     title: d.name,
-                    detail: DEVICES[d.kind].name,
+                    detail: d.note ? `${DEVICES[d.kind].name} · ${d.note}` : DEVICES[d.kind].name,
                     icon: DEVICES[d.kind].icon,
                     onOpen: () => openDevice(d.id)
                   }))}
@@ -376,10 +376,10 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
                 <RelatedGroup
                   label="Used in projects"
                   empty="No project uses it"
-                  items={relations.services.map(({ service, project }) => ({
+                  items={relations.services.map(({ service, project, role }) => ({
                     key: `svc-${service.id}`,
                     title: service.name,
-                    detail: project.name,
+                    detail: role ? `${project.name} · ${role}` : project.name,
                     onOpen: () => navigate(`/projects/${project.id}?show=services`)
                   }))}
                 />

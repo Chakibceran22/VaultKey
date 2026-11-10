@@ -229,8 +229,27 @@ pub struct ServiceInput {
     pub name: String,
     #[serde(default)]
     pub url: String,
+    /// The accounts it uses, in order (the first is the main one).
     #[serde(default)]
-    pub account_id: Option<i64>,
+    pub accounts: Vec<ServiceAccountInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServiceAccountInput {
+    pub account_id: i64,
+    /// What it is for there ("admin", "deploy only"); may be empty.
+    #[serde(default)]
+    pub role: String,
+}
+
+/// A device an account is signed in on, and what it does there.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceLinkInput {
+    pub device_id: i64,
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Deserialize)]
@@ -240,6 +259,8 @@ pub struct SecretInput {
     pub value: String,
     #[serde(default)]
     pub service_id: Option<i64>,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Deserialize)]
@@ -251,7 +272,24 @@ pub struct SecretUpdateInput {
     /// Text secrets only; absent keeps the current value.
     #[serde(default)]
     pub value: Option<String>,
+    /// Absent keeps the current description; empty clears it.
+    #[serde(default)]
+    pub description: Option<String>,
 }
+
+/// A file waiting in the upload dialog, chosen by its token, with its description.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StagedFileInput {
+    pub token: i64,
+    #[serde(default)]
+    pub description: String,
+}
+
+pub const MAX_ROLE: usize = 200;
+pub const MAX_DESCRIPTION: usize = 2000;
+pub const MAX_DEVICE_NOTE: usize = 200;
+const MAX_SERVICE_ACCOUNTS: usize = 50;
 
 impl std::fmt::Debug for SecretInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -281,7 +319,7 @@ pub fn validate_name(value: &str, field: &str, max: usize) -> VaultResult<String
     Ok(name.to_owned())
 }
 
-fn validate_optional_text(value: &str, field: &str, max: usize) -> VaultResult<String> {
+pub fn validate_optional_text(value: &str, field: &str, max: usize) -> VaultResult<String> {
     require_max_length(value, field, max)?;
     Ok(value.trim_matches(is_js_whitespace).to_owned())
 }
@@ -293,14 +331,25 @@ pub fn validate_project(input: &ProjectInput) -> VaultResult<(String, String)> {
     ))
 }
 
-pub fn validate_service(input: &ServiceInput) -> VaultResult<(String, String, Option<i64>)> {
+/// Name, URL, and the accounts as `(id, role)`: distinct, in order.
+pub fn validate_service(input: &ServiceInput) -> VaultResult<(String, String, Vec<(i64, String)>)> {
+    if input.accounts.len() > MAX_SERVICE_ACCOUNTS {
+        return Err(VaultError::invalid_input(format!(
+            "A service can use at most {MAX_SERVICE_ACCOUNTS} accounts."
+        )));
+    }
+    let mut accounts: Vec<(i64, String)> = Vec::with_capacity(input.accounts.len());
+    for account in &input.accounts {
+        let id = validate_id(account.account_id, "account id")?;
+        if accounts.iter().any(|(seen, _)| *seen == id) {
+            return Err(VaultError::invalid_input("That account is listed twice."));
+        }
+        accounts.push((id, validate_optional_text(&account.role, "role", MAX_ROLE)?));
+    }
     Ok((
         validate_name(&input.name, "service name", 120)?,
         validate_optional_text(&input.url, "URL", 2048)?,
-        input
-            .account_id
-            .map(|id| validate_id(id, "account id"))
-            .transpose()?,
+        accounts,
     ))
 }
 

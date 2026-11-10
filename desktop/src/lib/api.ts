@@ -46,8 +46,11 @@ export const api: VaultApi = {
   updateSecret: (secretId, input) => call('update_secret', { secretId, input }),
   revealSecret: (secretId) => call('reveal_secret', { secretId }),
   deleteSecret: (secretId) => call('delete_secret', { secretId }),
-  importFiles: (projectId, serviceId) => call('import_files', { projectId, serviceId }),
-  importDroppedFiles: (projectId, serviceId) => call('import_dropped_files', { projectId, serviceId }),
+  stageFiles: () => call('stage_files'),
+  stageDroppedFiles: () => call('stage_dropped_files'),
+  unstageFile: (token) => call('unstage_file', { token }),
+  clearStagedFiles: () => call('clear_staged_files'),
+  importStagedFiles: (projectId, serviceId, files) => call('import_staged_files', { projectId, serviceId, files }),
   exportSecret: (secretId) => call('export_secret', { secretId }),
   listAccountLinks: () => call('list_account_links'),
   setSignInLinks: (accountId, linkedAccountIds) => call('set_sign_in_links', { accountId, linkedAccountIds }),
@@ -68,6 +71,6 @@ export const api: VaultApi = {
   deleteAccountSecret: (secretId) => call('delete_account_secret', { secretId }),
   setAccountDevices: (accountId, deviceIds) => call('set_account_devices', { accountId, deviceIds }),
   setAccountCategory: (accountId, name) => call('set_account_category', { accountId, name }),
-  setAccountConnections: (accountId, { signIn, recovery, deviceIds }) =>
-    call('set_account_connections', { accountId, signIn, recovery, deviceIds })
+  setAccountConnections: (accountId, { signIn, recovery, devices }) =>
+    call('set_account_connections', { accountId, signIn, recovery, devices })
 }

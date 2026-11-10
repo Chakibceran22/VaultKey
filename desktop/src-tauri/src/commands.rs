@@ -15,12 +15,12 @@ use crate::error::{VaultError, VaultResult, log_failure};
 use crate::totp::TotpCode;
 use crate::validation::{
     AccountSecretInput, AccountSecretUpdateInput, CredentialInput, CredentialUpdateInput,
-    DeviceInput, FactorInput, FactorUpdateInput, ProjectInput, SecretInput, SecretUpdateInput,
-    ServiceInput,
+    DeviceInput, DeviceLinkInput, FactorInput, FactorUpdateInput, ProjectInput, SecretInput,
+    SecretUpdateInput, ServiceInput, StagedFileInput,
 };
 use crate::vault::{
     AccountList, Created, CredentialList, DomainList, ImportReport, LinkList, RevealedSecret,
-    UnlockResult, Vault, VaultStatus,
+    StagedList, UnlockResult, Vault, VaultStatus,
 };
 use crate::workspace::Workspace;
 
@@ -294,46 +294,65 @@ pub async fn delete_secret(app: AppHandle, webview: Webview, secret_id: i64) -> 
     .await
 }
 
-/// Opens the native file picker (from Rust, so the page never supplies a path)
-/// and encrypts the chosen files into the project.
+/// The upload dialog: opens the native file picker (from Rust, so the page never
+/// supplies a path) and adds the chosen files to the dialog's list.
 #[tauri::command]
-pub async fn import_files(
-    app: AppHandle,
-    webview: Webview,
-    project_id: i64,
-    service_id: Option<i64>,
-) -> VaultResult<ImportReport> {
+pub async fn stage_files(app: AppHandle, webview: Webview) -> VaultResult<StagedList> {
     let dialogs = app.clone();
-    run("file import", app, webview, move |vault| {
-        vault.require_project(project_id)?;
+    run("file pick", app, webview, move |vault| {
+        vault.require_unlocked()?;
         let picked = dialogs
             .dialog()
             .file()
             .set_title("Add files")
             .blocking_pick_files();
-        let paths: Vec<_> = picked
+        let paths = picked
             .unwrap_or_default()
             .into_iter()
             .filter_map(|path| path.into_path().ok())
             .collect();
-        vault.import_files(project_id, service_id, &paths)
+        vault.stage_files(paths)
     })
     .await
 }
 
-/// Encrypts the files last dropped onto the window into the project. The paths
-/// come from the OS drop event recorded in Rust, never from the page.
+/// Adds the files last dropped onto the window to the upload dialog. The paths come
+/// from the OS drop event recorded in Rust, never from the page.
 #[tauri::command]
-pub async fn import_dropped_files(
+pub async fn stage_dropped_files(app: AppHandle, webview: Webview) -> VaultResult<StagedList> {
+    run("file drop", app, webview, move |vault| {
+        let paths = vault.take_dropped();
+        vault.stage_files(paths)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn unstage_file(app: AppHandle, webview: Webview, token: i64) -> VaultResult<StagedList> {
+    run("file unstage", app, webview, move |vault| vault.unstage_file(token)).await
+}
+
+#[tauri::command]
+pub async fn clear_staged_files(app: AppHandle, webview: Webview) -> VaultResult<()> {
+    run("file unstage", app, webview, move |vault| {
+        vault.clear_staged();
+        Ok(())
+    })
+    .await
+}
+
+/// Encrypts the upload dialog's chosen files into the project, each with its description.
+#[tauri::command]
+pub async fn import_staged_files(
     app: AppHandle,
     webview: Webview,
     project_id: i64,
     service_id: Option<i64>,
+    files: Vec<StagedFileInput>,
 ) -> VaultResult<ImportReport> {
-    run("file drop import", app, webview, move |vault| {
+    run("file import", app, webview, move |vault| {
         vault.require_project(project_id)?;
-        let paths = vault.take_dropped();
-        vault.import_files(project_id, service_id, &paths)
+        vault.import_staged(project_id, service_id, &files)
     })
     .await
 }
@@ -592,17 +611,10 @@ pub async fn set_account_connections(
     account_id: i64,
     sign_in: Vec<i64>,
     recovery: Vec<i64>,
-    device_ids: Vec<i64>,
+    devices: Vec<DeviceLinkInput>,
 ) -> VaultResult<()> {
     run("account connections", app, webview, move |vault| {
-        vault.set_account_connections(
-            account_id,
-            crate::account_details::Connections {
-                sign_in: &sign_in,
-                recovery: &recovery,
-                devices: &device_ids,
-            },
-        )
+        vault.set_account_connections(account_id, &sign_in, &recovery, &devices)
     })
     .await
 }

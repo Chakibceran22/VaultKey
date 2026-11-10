@@ -98,3 +98,34 @@ fn finds_by_meaning() -> model::Result<()> {
     }
     Ok(())
 }
+
+/// Schema v5: a service with several accounts, each with a role.
+#[test]
+fn finds_every_account_a_service_uses_and_each_by_its_role() {
+    let vault: Vault = serde_json::from_value(serde_json::json!({
+        "accounts": [
+            { "id": 1, "domainName": "coolify.acme.dev", "email": "admin@acme.dev", "group": "Developer and cloud" },
+            { "id": 2, "domainName": "coolify.acme.dev", "email": "deploy@acme.dev", "group": "Developer and cloud" },
+            { "id": 3, "domainName": "github.com", "email": "me@acme.dev", "group": "Developer and cloud" }
+        ],
+        "projects": [{ "id": 1, "name": "Acme" }],
+        "services": [{ "id": 1, "projectId": 1, "name": "Coolify", "url": "https://coolify.acme.dev",
+            "accounts": [{ "accountId": 2, "role": "deploy only" }, { "accountId": 1, "role": "admin, root" }] }],
+        "secrets": [{ "id": 1, "projectId": 1, "serviceId": 1, "kind": "file", "name": "id_ed25519",
+            "description": "root ssh key for the prod server" }],
+        "devices": [{ "id": 1, "name": "iPhone", "kind": "phone" }],
+        "deviceLinks": [{ "accountId": 3, "deviceId": 1, "note": "authenticator" }]
+    }))
+    .unwrap();
+    let index = Index::new(&vault);
+    let ids = |query: &str| -> Vec<String> {
+        let (response, _) = search(&index, query, None, &words_only()).unwrap();
+        response.hits.iter().filter(|h| h.answer).map(|h| h.node.id.clone()).collect()
+    };
+    let both = ids("coolify account");
+    assert!(both.contains(&"account:1".into()) && both.contains(&"account:2".into()), "{both:?}");
+    assert_eq!(first(&index, "coolify admin", None, &words_only()), "account:1");
+    assert_eq!(first(&index, "coolify deploy", None, &words_only()), "account:2");
+    assert_eq!(first(&index, "root ssh key", None, &words_only()), "file:1");
+    assert_eq!(first(&index, "authenticator iphone", None, &words_only()), "device:1");
+}

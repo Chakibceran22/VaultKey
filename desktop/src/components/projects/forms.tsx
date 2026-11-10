@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { SecretMeta, Service } from '@renderer/shared/contracts'
 import { AccountFields } from '@renderer/components/accounts/AccountFields'
-import { AccountPicker, Segmented, Select, Textarea } from '@renderer/components/ui/controls'
+import { AccountPicker, Select, Textarea } from '@renderer/components/ui/controls'
+import { Button } from '@renderer/components/ui/button'
 import { Field, Input } from '@renderer/components/ui/input'
 import { ModalForm } from '@renderer/components/ui/modal-form'
 import { hostOf, refreshVault, useAccounts, useDomains } from '@renderer/hooks/use-vault'
@@ -61,9 +62,10 @@ export function ServiceForm({
   const [draft, setDraft] = useState<ServiceDraft>(() => ({
     name: service?.name ?? '',
     url: service?.url ?? '',
-    access: service ? (service.accountId ? 'existing' : 'none') : 'existing',
-    accountId: service?.accountId ?? null,
-    newAccount: emptyAccountDraft(hostOf(service?.url ?? ''))
+    accounts: service?.accounts ?? [],
+    creating: false,
+    newAccount: emptyAccountDraft(hostOf(service?.url ?? '')),
+    newRole: ''
   }))
   const set = <K extends keyof ServiceDraft>(key: K, value: ServiceDraft[K]): void =>
     setDraft((current) => ({ ...current, [key]: value }))
@@ -73,8 +75,15 @@ export function ServiceForm({
       submitLabel={service ? 'Save changes' : 'Add service'}
       onCancel={onCancel}
       save={async () => {
+        // Once the new account exists, it is one of the chosen ones: a retry must not create it again.
         await saveService(queryClient, domains, projectId, service?.id ?? null, draft, (accountId) =>
-          setDraft((current) => ({ ...current, access: 'existing', accountId }))
+          setDraft((current) => ({
+            ...current,
+            creating: false,
+            accounts: [...current.accounts, { accountId, role: current.newRole }],
+            newAccount: emptyAccountDraft(hostOf(current.url)),
+            newRole: ''
+          }))
         )
         toast.success(service ? 'Service updated' : 'Service added')
         onSaved()
@@ -109,38 +118,58 @@ export function ServiceForm({
 
       <div className="space-y-2.5 border-t pt-5">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[13px] font-medium text-heading">Account</span>
-          <Segmented
-            label="Which account this service uses"
-            value={draft.access}
-            onChange={(access) => set('access', access)}
-            options={[
-              { value: 'existing', label: 'From the vault' },
-              { value: 'new', label: 'New account' },
-              { value: 'none', label: 'None' }
-            ]}
-          />
+          <span className="text-[13px] font-medium text-heading">Accounts</span>
+          <Button variant="ghost" size="sm" onClick={() => set('creating', !draft.creating)}>
+            {draft.creating ? 'Cancel new account' : 'New account'}
+          </Button>
         </div>
-        {draft.access === 'existing' && (
-          <AccountPicker
-            accounts={accounts}
-            selected={draft.accountId ? [draft.accountId] : []}
-            onChange={(ids) => set('accountId', ids[0] ?? null)}
-            placeholder="Search for the account this service uses"
-          />
-        )}
-        {draft.access === 'none' && (
-          <p className="text-[13px] text-muted-foreground">You can link an account later.</p>
+        <AccountPicker
+          accounts={accounts}
+          selected={draft.accounts.map((a) => a.accountId)}
+          onChange={(ids) =>
+            set(
+              'accounts',
+              ids.map((accountId) => draft.accounts.find((a) => a.accountId === accountId) ?? { accountId, role: '' })
+            )
+          }
+          multiple
+          placeholder={draft.accounts.length ? 'Add another account' : 'Search for the accounts this service uses'}
+          notes={{
+            value: (id) => draft.accounts.find((a) => a.accountId === id)?.role ?? '',
+            onChange: (id, role) =>
+              set(
+                'accounts',
+                draft.accounts.map((a) => (a.accountId === id ? { ...a, role } : a))
+              ),
+            placeholder: 'What it’s for here: admin, deploy only…',
+            label: (account) => `What ${account.domainName} is for in this service`
+          }}
+        />
+        {draft.accounts.length === 0 && !draft.creating && (
+          <p className="text-[13px] text-muted-foreground">None yet. You can link accounts later.</p>
         )}
       </div>
-      {draft.access === 'new' && (
-        <AccountFields
-          draft={draft.newAccount}
-          onChange={(newAccount) => set('newAccount', newAccount)}
-          showWebsite
-          websites={domains.map((d) => d.name).sort()}
-          accounts={accounts}
-        />
+      {draft.creating && (
+        <>
+          <AccountFields
+            draft={draft.newAccount}
+            onChange={(newAccount) => set('newAccount', newAccount)}
+            showWebsite
+            websites={domains.map((d) => d.name).sort()}
+            accounts={accounts}
+          />
+          <Field label="Role in this service" hint="Optional">
+            {(id) => (
+              <Input
+                id={id}
+                placeholder="admin, deploy only…"
+                value={draft.newRole}
+                maxLength={200}
+                onChange={(e) => set('newRole', e.target.value)}
+              />
+            )}
+          </Field>
+        </>
       )}
     </ModalForm>
   )
@@ -165,16 +194,18 @@ export function SecretForm({
   const [name, setName] = useState(secret?.name ?? '')
   const [value, setValue] = useState('')
   const [serviceId, setServiceId] = useState<number | null>(secret?.serviceId ?? null)
+  const [description, setDescription] = useState(secret?.description ?? '')
 
   return (
     <ModalForm
       submitLabel={secret ? 'Save changes' : 'Add secret'}
       onCancel={onCancel}
       save={async () => {
+        const about = description.trim()
         if (secret) {
-          unwrap(await api.updateSecret(secret.id, { name, serviceId, ...(value ? { value } : {}) }))
+          unwrap(await api.updateSecret(secret.id, { name, serviceId, description: about, ...(value ? { value } : {}) }))
         } else {
-          unwrap(await api.createSecret(projectId, { name, value, serviceId }))
+          unwrap(await api.createSecret(projectId, { name, value, serviceId, description: about }))
         }
         await refreshVault(queryClient)
         toast.success(secret ? 'Saved' : 'Secret added')
@@ -208,6 +239,18 @@ export function SecretForm({
           )}
         </Field>
       )}
+      <Field label="Description" hint="Optional">
+        {(id) => (
+          <Textarea
+            id={id}
+            placeholder={isFile ? 'Root SSH key for the prod server' : 'Live mode, read-only, expires in June…'}
+            value={description}
+            maxLength={2000}
+            onChange={(e) => setDescription(e.target.value)}
+            className="min-h-16 text-[13.5px]"
+          />
+        )}
+      </Field>
       <Field label="Service" hint="Optional">
         {(id) => (
           <Select
@@ -227,7 +270,7 @@ export function SecretForm({
       <p className="text-[12.5px] leading-relaxed text-muted-foreground">
         {isFile
           ? 'The file’s content stays as it is. To replace it, add the new version as a file.'
-          : 'Encrypted with your vault key before it is saved.'}
+          : 'The value and its description are encrypted with your vault key before they are saved.'}
       </p>
     </ModalForm>
   )

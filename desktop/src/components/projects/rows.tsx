@@ -20,7 +20,7 @@ import { CopyAction } from '@renderer/components/ui/copy'
 import { IconButton } from '@renderer/components/ui/icon-button'
 import { SiteTile } from '@renderer/components/ui/misc'
 import { RowMenu, RowMenuItem, RowMenuSeparator } from '@renderer/components/ui/overlays'
-import { formatSize, hostOf, type AccountRelations } from '@renderer/hooks/use-vault'
+import { formatSize, hostOf } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { credentialsService } from '@renderer/lib/credentialsService'
 import { unwrap } from '@renderer/lib/ipc'
@@ -29,30 +29,36 @@ import { toast } from '@renderer/lib/toast'
 
 const ROW = 'grid items-center gap-x-4 px-4 py-3'
 
-/** A service: its address, the account it signs in with, and quick copies. */
+/** An account a service uses, its role there, and what it signs in with (if anything). */
+export interface ServiceAccountView {
+  account: AccountSummary
+  role: string
+  via: AccountSummary | undefined
+}
+
+const COLUMNS = 'grid-cols-[2rem_minmax(0,5fr)_minmax(0,6fr)_6.5rem]'
+
+/**
+ * A service: its address, the accounts it uses (the main one first, each with its
+ * role there), and quick copies for each.
+ */
 export function ServiceRow({
   service,
-  account,
-  relations,
+  accounts,
   onEdit,
   onDelete
 }: {
   service: Service
-  account: AccountSummary | undefined
-  relations: AccountRelations | undefined
+  accounts: ServiceAccountView[]
   onEdit: () => void
   onDelete: () => void
 }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const via = relations?.signsInWith[0]
-  const openAccount = (): void => {
-    if (account) navigate(`/accounts/${account.id}`)
-  }
+  const [main, ...others] = accounts
 
   // Decrypted only when copied.
-  const password = async (): Promise<string> => {
-    if (!account) throw new Error('No account')
+  const passwordOf = (account: AccountSummary) => async (): Promise<string> => {
     const credentials = await queryClient.fetchQuery({
       queryKey: ['credentials', account.domainId],
       queryFn: () => credentialsService.getCredentials(account.domainId)
@@ -61,42 +67,61 @@ export function ServiceRow({
     if (!credential) throw new Error('This password could not be decrypted.')
     return credential.password
   }
+  const detail = ({ account, role, via }: ServiceAccountView): string =>
+    [via ? `${account.domainName}, via ${via.domainName}` : account.domainName, role].filter(Boolean).join(' · ')
+  const accountCell = (view: ServiceAccountView, small = false) => (
+    <button
+      type="button"
+      onClick={() => navigate(`/accounts/${view.account.id}`)}
+      className="min-w-0 cursor-pointer text-left"
+      title={view.role || undefined}
+    >
+      <p className={`truncate text-heading hover:underline ${small ? 'text-[13.5px]' : 'text-[14px]'}`}>{view.account.email}</p>
+      <p className={`truncate text-muted-foreground ${small ? 'text-[12.5px]' : 'text-[13px]'}`}>{detail(view)}</p>
+    </button>
+  )
+  const copies = (view: ServiceAccountView) => (
+    <>
+      <CopyAction label={`Copy ${view.account.domainName} email`} value={view.account.email} />
+      {!view.via && <CopyAction label={`Copy ${view.account.domainName} password`} value={passwordOf(view.account)} secret />}
+    </>
+  )
 
   return (
-    <li className={`${ROW} grid-cols-[2rem_minmax(0,5fr)_minmax(0,6fr)_6.5rem]`}>
-      <SiteTile name={service.name} size="sm" />
-      <div className="min-w-0">
-        <p className="truncate text-[14.5px] font-medium text-heading">{service.name}</p>
-        <p className="truncate text-[13px] text-muted-foreground">{hostOf(service.url) || 'No address'}</p>
-      </div>
-      {account ? (
-        <button type="button" onClick={openAccount} className="min-w-0 cursor-pointer text-left">
-          <p className="truncate text-[14px] text-heading hover:underline">{account.email}</p>
-          <p className="truncate text-[13px] text-muted-foreground">
-            {via ? `${account.domainName}, via ${via.domainName}` : account.domainName}
-          </p>
-        </button>
-      ) : (
-        <p className="text-[13.5px] text-muted-foreground">No account linked</p>
-      )}
-      <div className="flex items-center justify-end gap-0.5">
-        {account && <CopyAction label="Copy email" value={account.email} />}
-        {account && !via && <CopyAction label="Copy password" value={password} secret />}
-        <RowMenu label={`More actions for ${service.name}`}>
-          <RowMenuItem icon={PencilSimple} onClick={onEdit}>
-            Edit service
-          </RowMenuItem>
-          {account && (
-            <RowMenuItem icon={UserCircle} onClick={openAccount}>
-              Open account
+    <li>
+      <div className={`${ROW} ${COLUMNS}`}>
+        <SiteTile name={service.name} size="sm" />
+        <div className="min-w-0">
+          <p className="truncate text-[14.5px] font-medium text-heading">{service.name}</p>
+          <p className="truncate text-[13px] text-muted-foreground">{hostOf(service.url) || 'No address'}</p>
+        </div>
+        {main ? accountCell(main) : <p className="text-[13.5px] text-muted-foreground">No account linked</p>}
+        <div className="flex items-center justify-end gap-0.5">
+          {main && copies(main)}
+          <RowMenu label={`More actions for ${service.name}`}>
+            <RowMenuItem icon={PencilSimple} onClick={onEdit}>
+              Edit service
             </RowMenuItem>
-          )}
-          <RowMenuSeparator />
-          <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
-            Delete service
-          </RowMenuItem>
-        </RowMenu>
+            {main && (
+              <RowMenuItem icon={UserCircle} onClick={() => navigate(`/accounts/${main.account.id}`)}>
+                Open account
+              </RowMenuItem>
+            )}
+            <RowMenuSeparator />
+            <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
+              Delete service
+            </RowMenuItem>
+          </RowMenu>
+        </div>
       </div>
+      {others.map((view) => (
+        <div key={view.account.id} className={`grid items-center gap-x-4 px-4 pb-2.5 ${COLUMNS}`}>
+          <span />
+          <span />
+          {accountCell(view, true)}
+          <div className="flex items-center justify-end gap-0.5 pr-8">{copies(view)}</div>
+        </div>
+      ))}
     </li>
   )
 }
@@ -158,6 +183,11 @@ export function SecretRow({
           <p className="truncate font-mono text-[13.5px] text-heading" data-selectable>
             {secret.name}
           </p>
+          {secret.description && (
+            <p className="truncate text-[12.5px] text-foreground/80" title={secret.description}>
+              {secret.description}
+            </p>
+          )}
           <p className="truncate text-[12.5px] text-muted-foreground">
             {isFile ? `${formatSize(secret.size)}, ${serviceName ?? 'whole project'}` : where}
           </p>

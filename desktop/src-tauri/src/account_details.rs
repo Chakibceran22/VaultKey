@@ -1,7 +1,7 @@
 //! Schema v3: what else gets you into an account. Devices, second steps
 //! (authenticator apps, passkeys, security keys, codes by text or email, sign-in
 //! prompts, recovery codes), secrets and notes kept with an account, and the
-//! devices an account is signed in on.
+//! devices an account is signed in on (v5: each with a sealed note).
 //!
 //! SQL only; sealing and the unlock guard live in `vault.rs`. Payloads leave this
 //! module only through the `*_payload` functions (for decryption): listings carry
@@ -13,7 +13,7 @@ use serde::Serialize;
 use crate::db::{VaultDatabase, now_iso};
 use crate::error::{VaultError, VaultResult};
 use crate::workspace::{
-    RECOVERY, SIGN_IN, changed, exists, renamed, replace_links, require_account,
+    Open, RECOVERY, SIGN_IN, Sealed, changed, exists, renamed, replace_links, require_account,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -59,6 +59,8 @@ pub struct AccountSecretMeta {
 pub struct AccountDevice {
     pub account_id: i64,
     pub device_id: i64,
+    /// What it does there ("mobile app + authenticator"); empty for none. Stored sealed.
+    pub note: String,
 }
 
 /// Everything the account and device screens need, in one call.
@@ -71,7 +73,7 @@ pub struct AccountDetails {
     pub device_links: Vec<AccountDevice>,
 }
 
-pub fn load(conn: &Connection) -> VaultResult<AccountDetails> {
+pub fn load(conn: &Connection, open: Open<'_>) -> VaultResult<AccountDetails> {
     let devices = conn
         .prepare_cached(
             "SELECT id, name, kind, notes, created_at, updated_at
@@ -123,17 +125,22 @@ pub fn load(conn: &Connection) -> VaultResult<AccountDetails> {
             })
         })?
         .collect::<Result<_, _>>()?;
-    let device_links = conn
+    let rows: Vec<(i64, i64, Sealed)> = conn
         .prepare_cached(
-            "SELECT account_id, device_id FROM account_devices ORDER BY account_id, device_id",
+            "SELECT account_id, device_id, note FROM account_devices ORDER BY account_id, device_id",
         )?
-        .query_map([], |row| {
-            Ok(AccountDevice {
-                account_id: row.get(0)?,
-                device_id: row.get(1)?,
-            })
-        })?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<_, _>>()?;
+    let device_links = rows
+        .into_iter()
+        .map(|(account_id, device_id, note)| {
+            Ok(AccountDevice {
+                account_id,
+                device_id,
+                note: open(note)?,
+            })
+        })
+        .collect::<VaultResult<_>>()?;
     Ok(AccountDetails {
         devices,
         factors,
@@ -353,28 +360,30 @@ pub fn delete_account_secret(conn: &Connection, id: i64) -> VaultResult<()> {
 
 // ── devices an account is signed in on ──────────────────────────────────────
 
-/// Inside a transaction: replaces the devices `account_id` is signed in on.
+/// Inside a transaction: replaces the devices `account_id` is signed in on, each
+/// with its sealed note.
 fn replace_devices(
     tx: &Connection,
     account_id: i64,
-    device_ids: &[i64],
+    devices: &[(i64, Sealed)],
     now: &str,
 ) -> VaultResult<()> {
     tx.execute(
         "DELETE FROM account_devices WHERE account_id = ?1",
         [account_id],
     )?;
-    for &device_id in device_ids {
-        require_device(tx, device_id)?;
+    for (device_id, note) in devices {
+        require_device(tx, *device_id)?;
         tx.execute(
-            "INSERT OR IGNORE INTO account_devices (account_id, device_id, created_at) VALUES (?1, ?2, ?3)",
-            params![account_id, device_id, now],
+            "INSERT OR IGNORE INTO account_devices (account_id, device_id, note, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![account_id, device_id, note, now],
         )?;
     }
     Ok(())
 }
 
-/// Replaces the devices `account_id` is signed in on.
+/// Replaces the devices `account_id` is signed in on. Devices it stays on keep
+/// their note; this call carries none.
 pub fn set_account_devices(
     database: &mut VaultDatabase,
     account_id: i64,
@@ -383,7 +392,19 @@ pub fn set_account_devices(
     let now = now_iso();
     database.transaction(|tx| {
         require_account(tx, account_id)?;
-        replace_devices(tx, account_id, device_ids, &now)
+        let mut kept = Vec::with_capacity(device_ids.len());
+        for &device_id in device_ids {
+            let note: Sealed = tx
+                .query_row(
+                    "SELECT note FROM account_devices WHERE account_id = ?1 AND device_id = ?2",
+                    params![account_id, device_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+            kept.push((device_id, note));
+        }
+        replace_devices(tx, account_id, &kept, &now)
     })
 }
 
@@ -391,7 +412,8 @@ pub fn set_account_devices(
 pub struct Connections<'a> {
     pub sign_in: &'a [i64],
     pub recovery: &'a [i64],
-    pub devices: &'a [i64],
+    /// Devices it is signed in on, each with its sealed note.
+    pub devices: &'a [(i64, Sealed)],
 }
 
 /// Replaces an account's sign-in links, recovery links and devices together:

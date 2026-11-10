@@ -33,7 +33,10 @@ use crate::validation::{
     ServiceInput, validate_name, validate_optional_id, validate_project, validate_secret_value,
     validate_service,
 };
-use crate::workspace::{self, AccountLink, NewSecret, Workspace};
+use crate::validation::{
+    DeviceLinkInput, MAX_DESCRIPTION, MAX_DEVICE_NOTE, StagedFileInput, validate_optional_text,
+};
+use crate::workspace::{self, AccountLink, NewSecret, Sealed, Workspace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -105,6 +108,69 @@ pub struct Vault {
     /// Files last dropped onto the window (paths from the OS, never from the page),
     /// waiting to be imported into a project.
     dropped: Mutex<Option<(Instant, Vec<PathBuf>)>>,
+    /// Files in the upload dialog, waiting to be added. Paths come from the native
+    /// picker or a drop, never from the page: it sees a token, a name and a size.
+    staged: Mutex<Staged>,
+}
+
+#[derive(Default)]
+struct Staged {
+    next_token: i64,
+    files: Vec<StagedFile>,
+}
+
+struct StagedFile {
+    token: i64,
+    path: PathBuf,
+    name: String,
+    size: u64,
+}
+
+/// A file in the upload dialog, as the page sees it.
+#[derive(Debug, Clone, Serialize)]
+pub struct StagedView {
+    pub token: i64,
+    pub name: String,
+    pub size: u64,
+}
+
+/// The upload dialog's files, and those just refused (a folder, too large…).
+#[derive(Debug, Serialize)]
+pub struct StagedList {
+    pub files: Vec<StagedView>,
+    pub skipped: Vec<SkippedFile>,
+}
+
+/// At most this many files wait in the upload dialog at once.
+const MAX_STAGED: usize = 100;
+
+impl Staged {
+    fn view(&self) -> Vec<StagedView> {
+        self.files
+            .iter()
+            .map(|f| StagedView {
+                token: f.token,
+                name: f.name.clone(),
+                size: f.size,
+            })
+            .collect()
+    }
+}
+
+/// Seals a note (role, description) with the vault key; an empty one is no note.
+fn seal_note(text: &str, key: &SecretKey) -> VaultResult<Sealed> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(crypto::encrypt_bytes(text.as_bytes(), key)?))
+}
+
+/// Opens a sealed note: "" for none.
+fn open_note(sealed: Sealed, key: &SecretKey) -> VaultResult<String> {
+    match sealed {
+        None => Ok(String::new()),
+        Some(bytes) => Ok(String::from_utf8_lossy(&crypto::decrypt_bytes(&bytes, key)?).into_owned()),
+    }
 }
 
 fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -130,6 +196,7 @@ impl Vault {
             session: Mutex::new(Session::default()),
             kdf_gate: Mutex::new(()),
             dropped: Mutex::new(None),
+            staged: Mutex::new(Staged::default()),
         }
     }
 
@@ -150,7 +217,7 @@ impl Vault {
             .ok_or_else(|| VaultError::locked("Unlock the vault first."))
     }
 
-    fn require_unlocked(&self) -> VaultResult<()> {
+    pub(crate) fn require_unlocked(&self) -> VaultResult<()> {
         self.session_key().map(drop)
     }
 
@@ -234,6 +301,10 @@ impl Vault {
         // Dropping the key zeroises it.
         session.key = None;
         session.epoch = session.epoch.wrapping_add(1);
+        drop(session);
+        // Nothing waits to be imported into a locked vault.
+        *lock_or_recover(&self.staged) = Staged::default();
+        *lock_or_recover(&self.dropped) = None;
     }
 
     // ── domains ─────────────────────────────────────────────────────────────
@@ -406,8 +477,9 @@ fn write_private(path: &Path, bytes: &[u8]) -> VaultResult<()> {
 
 impl Vault {
     pub fn workspace(&self) -> VaultResult<Workspace> {
-        self.require_unlocked()?;
-        self.with_database(|db| workspace::load_workspace(db.connection()))
+        let key = self.session_key()?;
+        let open = |sealed: Sealed| open_note(sealed, &key);
+        self.with_database(|db| workspace::load_workspace(db.connection(), &open))
     }
 
     pub fn create_project(&self, input: &ProjectInput) -> VaultResult<i64> {
@@ -445,18 +517,28 @@ impl Vault {
         })
     }
 
+    /// The service's accounts as `(id, sealed role)`.
+    fn seal_service(input: &ServiceInput, key: &SecretKey) -> VaultResult<(String, String, Vec<(i64, Sealed)>)> {
+        let (name, url, accounts) = validate_service(input)?;
+        let accounts = accounts
+            .iter()
+            .map(|(id, role)| Ok((*id, seal_note(role, key)?)))
+            .collect::<VaultResult<_>>()?;
+        Ok((name, url, accounts))
+    }
+
     pub fn create_service(&self, project_id: i64, input: &ServiceInput) -> VaultResult<i64> {
-        self.require_unlocked()?;
+        let key = self.session_key()?;
         let project_id = validate_id(project_id, "project id")?;
-        let (name, url, account_id) = validate_service(input)?;
-        self.with_database(|db| workspace::create_service(db, project_id, &name, &url, account_id))
+        let (name, url, accounts) = Self::seal_service(input, &key)?;
+        self.with_database(|db| workspace::create_service(db, project_id, &name, &url, &accounts))
     }
 
     pub fn update_service(&self, id: i64, input: &ServiceInput) -> VaultResult<()> {
-        self.require_unlocked()?;
+        let key = self.session_key()?;
         let id = validate_id(id, "service id")?;
-        let (name, url, account_id) = validate_service(input)?;
-        self.with_database(|db| workspace::update_service(db, id, &name, &url, account_id))
+        let (name, url, accounts) = Self::seal_service(input, &key)?;
+        self.with_database(|db| workspace::update_service(db, id, &name, &url, &accounts))
     }
 
     pub fn delete_service(&self, id: i64) -> VaultResult<()> {
@@ -470,6 +552,8 @@ impl Vault {
         let project_id = validate_id(project_id, "project id")?;
         let name = validate_name(&input.name, "name", 200)?;
         let service_id = validate_optional_id(input.service_id, "service id")?;
+        let description = validate_optional_text(&input.description, "description", MAX_DESCRIPTION)?;
+        let description = seal_note(&description, &key)?;
         let value = Zeroizing::new(input.value);
         validate_secret_value(&value)?;
         let payload = crypto::encrypt_bytes(value.as_bytes(), &key)?;
@@ -484,6 +568,7 @@ impl Vault {
                     mime_type: "text/plain",
                     size: value.len() as i64,
                     payload: &payload,
+                    description: description.as_deref(),
                 },
             )
         })
@@ -494,6 +579,14 @@ impl Vault {
         let id = validate_id(id, "secret id")?;
         let name = validate_name(&input.name, "name", 200)?;
         let service_id = validate_optional_id(input.service_id, "service id")?;
+        let description: Option<Sealed> = input
+            .description
+            .as_deref()
+            .map(|text| {
+                let text = validate_optional_text(text, "description", MAX_DESCRIPTION)?;
+                seal_note(&text, &key)
+            })
+            .transpose()?;
         let sealed = match input.value {
             Some(value) => {
                 let value = Zeroizing::new(value);
@@ -521,6 +614,7 @@ impl Vault {
                 sealed
                     .as_ref()
                     .map(|(payload, size)| (payload.as_slice(), *size)),
+                description.as_ref().map(|d| d.as_deref()),
             )
         })
     }
@@ -562,17 +656,33 @@ impl Vault {
 
     /// Encrypts files from disk into a project. Paths come from the native picker
     /// or the OS drop event, never from the page.
+    /// Files straight into a project, without descriptions (tests; the app goes
+    /// through the upload dialog: `stage_files` then `import_staged`).
+    #[cfg(test)]
     pub fn import_files(
         &self,
         project_id: i64,
         service_id: Option<i64>,
         paths: &[PathBuf],
     ) -> VaultResult<ImportReport> {
+        let files: Vec<(PathBuf, String)> = paths.iter().map(|p| (p.clone(), String::new())).collect();
+        self.import_described(project_id, service_id, &files)
+    }
+
+    /// Encrypts files into a project, each with its description (sealed too).
+    fn import_described(
+        &self,
+        project_id: i64,
+        service_id: Option<i64>,
+        files: &[(PathBuf, String)],
+    ) -> VaultResult<ImportReport> {
         let key = self.session_key()?;
         let project_id = validate_id(project_id, "project id")?;
         let service_id = validate_optional_id(service_id, "service id")?;
         let mut report = ImportReport::default();
-        for path in paths {
+        for (path, description) in files {
+            let description = validate_optional_text(description, "description", MAX_DESCRIPTION)?;
+            let description = seal_note(&description, &key)?;
             let name = path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -609,6 +719,7 @@ impl Vault {
                         mime_type: workspace::guess_mime(&name),
                         size: bytes.len() as i64,
                         payload: &payload,
+                        description: description.as_deref(),
                     },
                 )
             })?;
@@ -669,6 +780,94 @@ impl Vault {
             _ => Vec::new(),
         }
     }
+
+    // ── the upload dialog ───────────────────────────────────────────────────
+
+    /// Adds files to the upload dialog. Folders, unreadable and oversized files are
+    /// refused and reported; a file already in the list is not added twice.
+    pub fn stage_files(&self, paths: Vec<PathBuf>) -> VaultResult<StagedList> {
+        self.require_unlocked()?;
+        let mut skipped = Vec::new();
+        let mut staged = lock_or_recover(&self.staged);
+        for path in paths {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".to_owned());
+            let refuse = |reason: &str| SkippedFile {
+                name: name.clone(),
+                reason: reason.to_owned(),
+            };
+            match fs::metadata(&path) {
+                Ok(meta) if !meta.is_file() => skipped.push(refuse("Only files can be added, not folders.")),
+                Ok(meta) if meta.len() > MAX_FILE_BYTES => skipped.push(refuse("Files can be at most 25 MB.")),
+                Ok(_) if staged.files.iter().any(|f| f.path == path) => {}
+                Ok(_) if staged.files.len() >= MAX_STAGED => {
+                    skipped.push(refuse("At most 100 files can be added at once."))
+                }
+                Ok(meta) => {
+                    staged.next_token += 1;
+                    let token = staged.next_token;
+                    staged.files.push(StagedFile {
+                        token,
+                        path,
+                        name,
+                        size: meta.len(),
+                    });
+                }
+                Err(_) => skipped.push(refuse("The file couldn’t be read.")),
+            }
+        }
+        Ok(StagedList {
+            files: staged.view(),
+            skipped,
+        })
+    }
+
+    pub fn unstage_file(&self, token: i64) -> VaultResult<StagedList> {
+        self.require_unlocked()?;
+        let mut staged = lock_or_recover(&self.staged);
+        staged.files.retain(|f| f.token != token);
+        Ok(StagedList {
+            files: staged.view(),
+            skipped: Vec::new(),
+        })
+    }
+
+    /// Empties the upload dialog (closed, or cancelled).
+    pub fn clear_staged(&self) {
+        *lock_or_recover(&self.staged) = Staged::default();
+    }
+
+    /// Encrypts the chosen files of the upload dialog into the project, each with
+    /// its description, and takes them out of the dialog.
+    pub fn import_staged(
+        &self,
+        project_id: i64,
+        service_id: Option<i64>,
+        chosen: &[StagedFileInput],
+    ) -> VaultResult<ImportReport> {
+        self.require_unlocked()?;
+        let files: Vec<(PathBuf, String)> = {
+            let staged = lock_or_recover(&self.staged);
+            chosen
+                .iter()
+                .map(|c| {
+                    staged
+                        .files
+                        .iter()
+                        .find(|f| f.token == c.token)
+                        .map(|f| (f.path.clone(), c.description.clone()))
+                        .ok_or_else(|| VaultError::invalid_input("A file is no longer in the list. Add it again."))
+                })
+                .collect::<VaultResult<_>>()?
+        };
+        let report = self.import_described(project_id, service_id, &files)?;
+        lock_or_recover(&self.staged)
+            .files
+            .retain(|f| !chosen.iter().any(|c| c.token == f.token));
+        Ok(report)
+    }
 }
 
 // ── devices, second steps, account secrets and notes (schema v3) ────────────
@@ -722,8 +921,9 @@ fn utf8(plain: Zeroizing<Vec<u8>>) -> VaultResult<RevealedSecret> {
 impl Vault {
     /// Devices, second steps, account secrets (metadata only) and device links.
     pub fn account_details(&self) -> VaultResult<AccountDetails> {
-        self.require_unlocked()?;
-        self.with_database(|db| account_details::load(db.connection()))
+        let key = self.session_key()?;
+        let open = |sealed: Sealed| open_note(sealed, &key);
+        self.with_database(|db| account_details::load(db.connection(), &open))
     }
 
     pub fn create_device(&self, input: &DeviceInput) -> VaultResult<i64> {
@@ -912,21 +1112,40 @@ impl Vault {
         self.with_database(|db| account_details::set_account_devices(db, account_id, device_ids))
     }
 
-    /// Sign-in links, recovery links and devices in one transaction (the account form).
+    /// Sign-in links, recovery links and devices (each with its note, sealed) in one
+    /// transaction (the account form).
     pub fn set_account_connections(
         &self,
         account_id: i64,
-        connections: Connections<'_>,
+        sign_in: &[i64],
+        recovery: &[i64],
+        devices: &[DeviceLinkInput],
     ) -> VaultResult<()> {
-        self.require_unlocked()?;
+        let key = self.session_key()?;
         let account_id = validate_id(account_id, "account id")?;
-        for &id in connections.sign_in.iter().chain(connections.recovery) {
+        for &id in sign_in.iter().chain(recovery) {
             validate_id(id, "account id")?;
         }
-        for &id in connections.devices {
-            validate_id(id, "device id")?;
+        let mut sealed: Vec<(i64, Sealed)> = Vec::with_capacity(devices.len());
+        for device in devices {
+            let id = validate_id(device.device_id, "device id")?;
+            if sealed.iter().any(|(seen, _)| *seen == id) {
+                return Err(VaultError::invalid_input("That device is listed twice."));
+            }
+            let note = validate_optional_text(&device.note, "device note", MAX_DEVICE_NOTE)?;
+            sealed.push((id, seal_note(&note, &key)?));
         }
-        self.with_database(|db| account_details::set_connections(db, account_id, connections))
+        self.with_database(|db| {
+            account_details::set_connections(
+                db,
+                account_id,
+                Connections {
+                    sign_in,
+                    recovery,
+                    devices: &sealed,
+                },
+            )
+        })
     }
 }
 
@@ -934,6 +1153,8 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::error::ErrorCode;
+    use crate::validation::ServiceAccountInput;
+    use crate::workspace::ServiceAccount;
     use rusqlite::Connection;
     use std::path::Path;
 
@@ -1550,6 +1771,7 @@ mod tests {
             session: Mutex::new(Session::default()),
             kdf_gate: Mutex::new(()),
             dropped: Mutex::new(None),
+            staged: Mutex::new(Staged::default()),
         };
         assert!(vault.unlock(ASCII_PASSWORD).unwrap().valid);
         let domain = vault.list_domains().unwrap().domains[0].id;
@@ -1638,7 +1860,10 @@ mod tests {
                 &ServiceInput {
                     name: "Coolify".into(),
                     url: "https://coolify.acme.dev".into(),
-                    account_id: Some(google),
+                    accounts: vec![ServiceAccountInput {
+                        account_id: google,
+                        role: "admin, root on the server".into(),
+                    }],
                 },
             )
             .unwrap();
@@ -1648,7 +1873,7 @@ mod tests {
                 &ServiceInput {
                     name: "Coolify".into(),
                     url: String::new(),
-                    account_id: None
+                    accounts: Vec::new()
                 }
             )),
             ErrorCode::AlreadyExists
@@ -1659,7 +1884,10 @@ mod tests {
                 &ServiceInput {
                     name: "Ghost".into(),
                     url: String::new(),
-                    account_id: Some(9_999)
+                    accounts: vec![ServiceAccountInput {
+                        account_id: 9_999,
+                        role: String::new()
+                    }]
                 }
             )),
             ErrorCode::NotFound
@@ -1672,17 +1900,36 @@ mod tests {
                     name: "STRIPE_KEY".into(),
                     value: "sk_live_123".into(),
                     service_id: Some(coolify),
+                    description: "Live mode, full write access".into(),
                 },
             )
             .unwrap();
         let workspace = vault.workspace().unwrap();
         assert_eq!(workspace.projects[0].name, "Acme Store");
-        assert_eq!(workspace.services[0].account_id, Some(google));
+        assert_eq!(
+            workspace.services[0].accounts,
+            vec![ServiceAccount {
+                account_id: google,
+                role: "admin, root on the server".into()
+            }]
+        );
         let meta = &workspace.secrets[0];
         assert_eq!(
-            (meta.kind.as_str(), meta.size, meta.service_id),
-            ("text", 11, Some(coolify))
+            (meta.kind.as_str(), meta.size, meta.service_id, meta.description.as_str()),
+            ("text", 11, Some(coolify), "Live mode, full write access")
         );
+        // Roles and descriptions are sealed at rest, like the secrets themselves.
+        let (role, description): (Vec<u8>, Vec<u8>) = vault
+            .with_database(|db| {
+                let conn = db.connection();
+                Ok((
+                    conn.query_row("SELECT role FROM service_accounts", [], |r| r.get(0))?,
+                    conn.query_row("SELECT description FROM secrets", [], |r| r.get(0))?,
+                ))
+            })
+            .unwrap();
+        assert!(!role.windows(5).any(|w| w == b"admin"), "role sealed");
+        assert!(!description.windows(4).any(|w| w == b"Live"), "description sealed");
         let listed = serde_json::to_string(&workspace).unwrap();
         assert!(
             !listed.contains("sk_live_123"),
@@ -1708,6 +1955,7 @@ mod tests {
                     name: "STRIPE_SECRET".into(),
                     service_id: None,
                     value: Some("sk_live_456".into()),
+                    description: None,
                 },
             )
             .unwrap();
@@ -1719,6 +1967,7 @@ mod tests {
                     name: "STRIPE_SECRET".into(),
                     service_id: Some(coolify),
                     value: None,
+                    description: Some(String::new()),
                 },
             )
             .unwrap();
@@ -1726,6 +1975,11 @@ mod tests {
             vault.reveal_secret(key).unwrap().value,
             "sk_live_456",
             "no value keeps the old one"
+        );
+        assert_eq!(
+            vault.workspace().unwrap().secrets[0].description,
+            "",
+            "an empty description clears it"
         );
 
         // A secret can't be attached to another project's service.
@@ -1736,7 +1990,7 @@ mod tests {
                 &ServiceInput {
                     name: "Vercel".into(),
                     url: String::new(),
-                    account_id: None,
+                    accounts: Vec::new(),
                 },
             )
             .unwrap();
@@ -1746,7 +2000,8 @@ mod tests {
                 SecretInput {
                     name: "X".into(),
                     value: "y".into(),
-                    service_id: Some(elsewhere)
+                    service_id: Some(elsewhere),
+                    description: String::new()
                 }
             )),
             ErrorCode::InvalidInput
@@ -1762,8 +2017,8 @@ mod tests {
                 .iter()
                 .find(|s| s.id == coolify)
                 .unwrap()
-                .account_id,
-            None
+                .accounts,
+            Vec::new()
         );
         vault.delete_service(coolify).unwrap();
         let workspace = vault.workspace().unwrap();
@@ -1849,7 +2104,8 @@ mod tests {
                 SecretUpdateInput {
                     name: "logo.png".into(),
                     service_id: None,
-                    value: Some("x".into())
+                    value: Some("x".into()),
+                    description: None
                 }
             )),
             ErrorCode::InvalidInput,
@@ -2301,16 +2557,17 @@ mod tests {
         let github = account(&vault, "github.com", "me@example.com");
         let gmail = account(&vault, "google.com", "me@gmail.com");
         let mac = device(&vault, "MacBook", "computer");
-        fn all<'a>(sign_in: &'a [i64], recovery: &'a [i64], devices: &'a [i64]) -> Connections<'a> {
-            Connections {
-                sign_in,
-                recovery,
-                devices,
-            }
-        }
+        let on = |ids: &[i64]| -> Vec<DeviceLinkInput> {
+            ids.iter()
+                .map(|&device_id| DeviceLinkInput {
+                    device_id,
+                    note: String::new(),
+                })
+                .collect()
+        };
 
         vault
-            .set_account_connections(vercel, all(&[github], &[gmail], &[mac]))
+            .set_account_connections(vercel, &[github], &[gmail], &on(&[mac]))
             .unwrap();
         let state = |vault: &Vault| {
             let links = vault.account_links().unwrap().links;
@@ -2321,19 +2578,143 @@ mod tests {
 
         // A device deleted elsewhere: nothing is half-saved.
         assert_eq!(
-            code(vault.set_account_connections(vercel, all(&[], &[], &[9_999]))),
+            code(vault.set_account_connections(vercel, &[], &[], &on(&[9_999]))),
             ErrorCode::NotFound
         );
         assert_eq!(
-            code(vault.set_account_connections(vercel, all(&[vercel], &[], &[]))),
+            code(vault.set_account_connections(vercel, &[vercel], &[], &[])),
             ErrorCode::InvalidInput
         );
         assert_eq!(state(&vault), (2, 1), "a failed save changes nothing");
 
         vault
-            .set_account_connections(vercel, all(&[], &[], &[]))
+            .set_account_connections(vercel, &[], &[], &[])
             .unwrap();
         assert_eq!(state(&vault), (0, 0));
+    }
+
+    #[test]
+    fn device_notes_are_sealed_and_kept_when_only_ids_change() {
+        let (_directory, vault) = unlocked_vault();
+        let github = account(&vault, "github.com", "me@example.com");
+        let phone = device(&vault, "iPhone", "phone");
+        let mac = device(&vault, "MacBook", "computer");
+        let note = DeviceLinkInput {
+            device_id: phone,
+            note: "mobile app + authenticator".into(),
+        };
+        vault.set_account_connections(github, &[], &[], &[note]).unwrap();
+        let links = vault.account_details().unwrap().device_links;
+        assert_eq!(links[0].note, "mobile app + authenticator");
+        let stored: Vec<u8> = vault
+            .with_database(|db| Ok(db.connection().query_row("SELECT note FROM account_devices", [], |r| r.get(0))?))
+            .unwrap();
+        assert!(!stored.windows(6).any(|w| w == b"mobile"), "note sealed");
+
+        // Adding a device by id alone keeps the phone's note.
+        vault.set_account_devices(github, &[phone, mac]).unwrap();
+        let links = vault.account_details().unwrap().device_links;
+        let phone_link = links.iter().find(|l| l.device_id == phone).unwrap();
+        assert_eq!(phone_link.note, "mobile app + authenticator");
+        assert_eq!(links.len(), 2);
+
+        let twice = [
+            DeviceLinkInput { device_id: phone, note: String::new() },
+            DeviceLinkInput { device_id: phone, note: String::new() },
+        ];
+        assert_eq!(code(vault.set_account_connections(github, &[], &[], &twice)), ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn a_service_uses_several_accounts_in_order() {
+        let (_directory, vault) = unlocked_vault();
+        let acme = project(&vault, "Acme");
+        let admin = account(&vault, "coolify.acme.dev", "admin@acme.dev");
+        let deploy = account(&vault, "coolify.acme.dev", "deploy@acme.dev");
+        let input = |accounts: Vec<ServiceAccountInput>| ServiceInput {
+            name: "Coolify".into(),
+            url: String::new(),
+            accounts,
+        };
+        let both = || {
+            vec![
+                ServiceAccountInput { account_id: deploy, role: "deploy only".into() },
+                ServiceAccountInput { account_id: admin, role: "admin".into() },
+            ]
+        };
+        let coolify = vault.create_service(acme, &input(both())).unwrap();
+        let roles = |vault: &Vault| -> Vec<(i64, String)> {
+            vault.workspace().unwrap().services[0]
+                .accounts
+                .iter()
+                .map(|a| (a.account_id, a.role.clone()))
+                .collect()
+        };
+        assert_eq!(roles(&vault), vec![(deploy, "deploy only".into()), (admin, "admin".into())]);
+        // The pre-v5 column follows the first account.
+        let first: Option<i64> = vault
+            .with_database(|db| Ok(db.connection().query_row("SELECT account_id FROM services", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(first, Some(deploy));
+
+        // Listed twice, or an unknown account: refused, nothing changes.
+        let twice = vec![
+            ServiceAccountInput { account_id: admin, role: String::new() },
+            ServiceAccountInput { account_id: admin, role: String::new() },
+        ];
+        assert_eq!(code(vault.update_service(coolify, &input(twice))), ErrorCode::InvalidInput);
+        let ghost = vec![ServiceAccountInput { account_id: 9_999, role: String::new() }];
+        assert_eq!(code(vault.update_service(coolify, &input(ghost))), ErrorCode::NotFound);
+        assert_eq!(roles(&vault).len(), 2, "a failed save changes nothing");
+
+        // Deleting one account leaves the other.
+        vault.delete_credential(deploy).unwrap();
+        assert_eq!(roles(&vault), vec![(admin, "admin".into())]);
+    }
+
+    #[test]
+    fn the_upload_dialog_imports_only_what_it_was_given() {
+        let (directory, vault) = unlocked_vault();
+        let acme = project(&vault, "Acme");
+        let write = |name: &str, body: &[u8]| {
+            let path = directory.path().join(name);
+            fs::write(&path, body).unwrap();
+            path
+        };
+        let key = write("id_ed25519", b"-----BEGIN OPENSSH PRIVATE KEY-----");
+        let env = write("prod.env", b"DATABASE_URL=postgres://x");
+        let staged = vault
+            .stage_files(vec![key.clone(), env.clone(), key.clone(), directory.path().to_path_buf()])
+            .unwrap();
+        assert_eq!(staged.files.len(), 2, "a file is listed once");
+        assert_eq!(staged.skipped.len(), 1, "a folder is refused");
+        let token = |name: &str| staged.files.iter().find(|f| f.name == name).unwrap().token;
+
+        // Only the key, with its description; the .env stays in the dialog.
+        let report = vault
+            .import_staged(
+                acme,
+                None,
+                &[StagedFileInput {
+                    token: token("id_ed25519"),
+                    description: "root SSH key for prod".into(),
+                }],
+            )
+            .unwrap();
+        assert_eq!(report.imported.len(), 1);
+        let secrets = vault.workspace().unwrap().secrets;
+        assert_eq!((secrets[0].name.as_str(), secrets[0].description.as_str()), ("id_ed25519", "root SSH key for prod"));
+        assert_eq!(vault.unstage_file(-1).unwrap().files.len(), 1);
+
+        // A token not (or no longer) in the list imports nothing.
+        assert_eq!(
+            code(vault.import_staged(acme, None, &[StagedFileInput { token: token("id_ed25519"), description: String::new() }])),
+            ErrorCode::InvalidInput
+        );
+
+        // Locking empties the dialog.
+        vault.lock();
+        assert!(lock_or_recover(&vault.staged).files.is_empty());
     }
 
     #[test]

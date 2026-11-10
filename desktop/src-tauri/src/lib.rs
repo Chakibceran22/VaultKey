@@ -83,6 +83,20 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build()?;
+    // Two-finger swipes go back and forward with Safari's own gesture: it knows when
+    // the fingers touch and lift, so it never misses a quick swipe or counts one twice
+    // (the page only sees anonymous scroll deltas). Other platforms: HistoryGestures.tsx.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = window.with_webview(|webview| {
+        // SAFETY: on macOS `inner()` is the window's live WKWebView, and `with_webview`
+        // runs this on the main thread, where WKWebView may be used.
+        unsafe {
+            let wk = &*webview.inner().cast::<objc2_web_kit::WKWebView>();
+            wk.setAllowsBackForwardNavigationGestures(true);
+        }
+    }) {
+        eprintln!("[vault] could not enable swipe navigation: {error}");
+    }
     let background = match window.theme() {
         Ok(Theme::Dark) => DARK_BG,
         _ => LIGHT_BG,
@@ -183,8 +197,11 @@ pub fn run() {
             commands::update_secret,
             commands::reveal_secret,
             commands::delete_secret,
-            commands::import_files,
-            commands::import_dropped_files,
+            commands::stage_files,
+            commands::stage_dropped_files,
+            commands::unstage_file,
+            commands::clear_staged_files,
+            commands::import_staged_files,
             commands::export_secret,
             commands::list_account_links,
             commands::set_sign_in_links,

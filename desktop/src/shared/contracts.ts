@@ -80,13 +80,21 @@ export interface Project {
   updatedAt: string
 }
 
-/** A service a project uses, signed into with one of the vault's accounts. */
+/** An account a service uses, and what it is for there ("admin", "deploy only"). */
+export interface ServiceAccount {
+  accountId: number
+  /** Empty for none. Stored encrypted. */
+  role: string
+}
+
+/** A service a project uses, signed into with some of the vault's accounts. */
 export interface Service {
   id: number
   projectId: number
   name: string
   url: string
-  accountId: number | null
+  /** In order; the first is the main one. */
+  accounts: ServiceAccount[]
   createdAt: string
   updatedAt: string
 }
@@ -100,6 +108,8 @@ export interface SecretMeta {
   name: string
   mimeType: string
   size: number
+  /** What it's for, its scopes; empty for none. Stored encrypted. */
+  description: string
   createdAt: string
   updatedAt: string
 }
@@ -170,6 +180,14 @@ export interface AccountSecretMeta {
 export interface AccountDevice {
   accountId: number
   deviceId: number
+  /** What it does there ("mobile app + authenticator"); empty for none. Stored encrypted. */
+  note: string
+}
+
+/** A device an account is signed in on, as the account form saves it. */
+export interface DeviceLinkInput {
+  deviceId: number
+  note: string
 }
 
 export interface AccountDetails {
@@ -227,19 +245,35 @@ export interface ProjectInput {
 export interface ServiceInput {
   name: string
   url?: string
-  accountId?: number | null
+  accounts?: ServiceAccount[]
 }
 
 export interface SecretInput {
   name: string
   value: string
   serviceId?: number | null
+  description?: string
 }
 
 export interface SecretUpdateInput {
   name: string
   serviceId?: number | null
   value?: string
+  /** Absent keeps the description; empty clears it. */
+  description?: string
+}
+
+/** A file waiting in the upload dialog: the path stays in Rust, the page gets a token. */
+export interface StagedFile {
+  token: number
+  name: string
+  size: number
+}
+
+export interface StagedList {
+  files: StagedFile[]
+  /** Refused just now: a folder, too large, unreadable. */
+  skipped: { name: string; reason: string }[]
 }
 
 export interface ImportReport {
@@ -271,8 +305,17 @@ export interface VaultApi {
   updateSecret: (secretId: number, input: SecretUpdateInput) => Promise<IpcResult<void>>
   revealSecret: (secretId: number) => Promise<IpcResult<{ value: string }>>
   deleteSecret: (secretId: number) => Promise<IpcResult<void>>
-  importFiles: (projectId: number, serviceId: number | null) => Promise<IpcResult<ImportReport>>
-  importDroppedFiles: (projectId: number, serviceId: number | null) => Promise<IpcResult<ImportReport>>
+  /** The upload dialog: pick files (native picker), add the last dropped ones, remove one, empty it. */
+  stageFiles: () => Promise<IpcResult<StagedList>>
+  stageDroppedFiles: () => Promise<IpcResult<StagedList>>
+  unstageFile: (token: number) => Promise<IpcResult<StagedList>>
+  clearStagedFiles: () => Promise<IpcResult<void>>
+  /** Encrypts the chosen files into the project, each with its description. */
+  importStagedFiles: (
+    projectId: number,
+    serviceId: number | null,
+    files: { token: number; description: string }[]
+  ) => Promise<IpcResult<ImportReport>>
   exportSecret: (secretId: number) => Promise<IpcResult<{ saved: boolean }>>
   listAccountLinks: () => Promise<IpcResult<{ links: AccountLink[] }>>
   setSignInLinks: (accountId: number, linkedAccountIds: number[]) => Promise<IpcResult<void>>
@@ -296,6 +339,6 @@ export interface VaultApi {
   /** Sign-in links, recovery links and devices, in one transaction. */
   setAccountConnections: (
     accountId: number,
-    connections: { signIn: number[]; recovery: number[]; deviceIds: number[] }
+    connections: { signIn: number[]; recovery: number[]; devices: DeviceLinkInput[] }
   ) => Promise<IpcResult<void>>
 }

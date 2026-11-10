@@ -8,7 +8,8 @@ import { IconButton } from './icon-button'
 /**
  * Copies a value (or one fetched on demand, e.g. decrypted only when asked) to
  * the native clipboard. Secrets are marked concealed, which keeps them out of
- * clipboard history. The icon pops to a check to confirm.
+ * clipboard history. The icon swaps to a check at once (a 100 ms pop, no exit
+ * animation to wait for), and back the same way.
  */
 export function CopyAction({
   label,
@@ -31,7 +32,7 @@ export function CopyAction({
       await (secret ? writeSecret(text) : writeText(text))
       setCopied(true)
       clearTimeout(timer.current)
-      timer.current = setTimeout(() => setCopied(false), 1500)
+      timer.current = setTimeout(() => setCopied(false), 1200)
     } catch (error) {
       toast.error(error instanceof Error && error.message ? error.message : 'Couldn’t copy to the clipboard')
     }
@@ -39,13 +40,12 @@ export function CopyAction({
 
   return (
     <IconButton label={copied ? 'Copied' : label} size="icon-sm" disabled={disabled} onClick={() => void copy()}>
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence initial={false}>
         <m.span
           key={copied ? 'done' : 'copy'}
-          initial={{ scale: 0.5, opacity: 0 }}
+          initial={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.5, opacity: 0 }}
-          transition={{ type: 'spring', stiffness: 600, damping: 28 }}
+          transition={{ duration: 0.1, ease: 'easeOut' }}
           className="flex"
         >
           {copied ? <Check size={15} weight="bold" className="text-primary" /> : <Copy size={15} />}

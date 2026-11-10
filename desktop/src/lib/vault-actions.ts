@@ -4,7 +4,7 @@
  * account first, when it has one).
  */
 import type { QueryClient } from '@tanstack/react-query'
-import type { AccountSummary, DomainRecord } from '@renderer/shared/contracts'
+import type { AccountSummary, DeviceLinkInput, DomainRecord, ServiceAccount } from '@renderer/shared/contracts'
 import { refreshVault } from '@renderer/hooks/use-vault'
 import { api } from './api'
 import { credentialsService } from './credentialsService'
@@ -30,8 +30,8 @@ export interface AccountDraft {
   signInWith: number[]
   /** Accounts that can recover this one (its recovery email). */
   recoveryBy: number[]
-  /** Devices it is signed in on. */
-  deviceIds: number[]
+  /** Devices it is signed in on, each with what it does there. */
+  devices: DeviceLinkInput[]
 }
 
 export function emptyAccountDraft(website = ''): AccountDraft {
@@ -44,7 +44,7 @@ export function emptyAccountDraft(website = ''): AccountDraft {
     category: '',
     signInWith: [],
     recoveryBy: [],
-    deviceIds: []
+    devices: []
   }
 }
 
@@ -54,7 +54,7 @@ async function saveConnections(accountId: number, draft: AccountDraft): Promise<
     await api.setAccountConnections(accountId, {
       signIn: draft.method === 'linked' ? draft.signInWith : [],
       recovery: draft.recoveryBy,
-      deviceIds: draft.deviceIds
+      devices: draft.devices.map((d) => ({ deviceId: d.deviceId, note: d.note.trim() }))
     })
   )
 }
@@ -130,10 +130,12 @@ export async function updateAccount(
 export interface ServiceDraft {
   name: string
   url: string
-  /** Which account the service uses: one already in the vault, a new one, or none yet. */
-  access: 'existing' | 'new' | 'none'
-  accountId: number | null
+  /** The vault's accounts it uses, in order, each with its role there. Empty: none yet. */
+  accounts: ServiceAccount[]
+  /** Also create a new account for it (added after the chosen ones). */
+  creating: boolean
   newAccount: AccountDraft
+  newRole: string
 }
 
 export async function saveService(
@@ -146,14 +148,13 @@ export async function saveService(
   onAccountCreated?: (accountId: number) => void
 ): Promise<void> {
   if (!draft.name.trim()) throw new Error('Enter the service name.')
-  if (draft.access === 'existing' && !draft.accountId) throw new Error('Choose the account this service uses.')
-  let accountId: number | null = null
-  if (draft.access === 'existing') accountId = draft.accountId
-  else if (draft.access === 'new') {
-    accountId = await createAccount(queryClient, domains, draft.newAccount)
+  const accounts = draft.accounts.map((a) => ({ accountId: a.accountId, role: a.role.trim() }))
+  if (draft.creating) {
+    const accountId = await createAccount(queryClient, domains, draft.newAccount)
     onAccountCreated?.(accountId)
+    accounts.push({ accountId, role: draft.newRole.trim() })
   }
-  const input = { name: draft.name, url: draft.url, accountId }
+  const input = { name: draft.name, url: draft.url, accounts }
   if (serviceId) unwrap(await api.updateService(serviceId, input))
   else unwrap(await api.createService(projectId, input))
   await refreshVault(queryClient)

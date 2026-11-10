@@ -224,7 +224,7 @@ export default function Devices(): React.ReactElement {
                       />
                       <LinkLine
                         label="Signed in to"
-                        items={usage.signedIn.map((account) => accountChip(account))}
+                        items={usage.signedIn.map((account) => accountChip(account, account.note || undefined))}
                         empty="No account noted"
                       />
                       {usage.noBackup.length > 0 && (

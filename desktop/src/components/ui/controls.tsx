@@ -1,5 +1,6 @@
-import { useId, useRef, useState } from 'react'
-import type { ComponentProps, KeyboardEvent } from 'react'
+import { useRef, useState } from 'react'
+import { Combobox } from '@base-ui/react/combobox'
+import type { ComponentProps } from 'react'
 import { MagnifyingGlass, PencilSimple, X } from '@phosphor-icons/react'
 import type { AccountSummary } from '@renderer/shared/contracts'
 import { cn } from '@renderer/lib/utils'
@@ -113,6 +114,11 @@ export function SearchField({
 /**
  * Choose one or more of the vault's accounts by typing. Chosen accounts are
  * listed above the search, each removable.
+ *
+ * The suggestions are a Base UI combobox popup: portaled out of the form, so a
+ * dialog's scrolling body can't clip them, flipped above the field when there is
+ * no room below, and part of the dialog's layer stack, so picking one doesn't
+ * count as a click outside the dialog.
  */
 export function AccountPicker({
   accounts,
@@ -120,7 +126,8 @@ export function AccountPicker({
   onChange,
   multiple = false,
   excludeId,
-  placeholder = 'Search accounts'
+  placeholder = 'Search accounts',
+  notes
 }: {
   accounts: AccountSummary[]
   selected: number[]
@@ -128,43 +135,28 @@ export function AccountPicker({
   multiple?: boolean
   excludeId?: number
   placeholder?: string
+  /** A short note per chosen account (what it is for there), edited in its row. */
+  notes?: {
+    value: (accountId: number) => string
+    onChange: (accountId: number, note: string) => void
+    placeholder: string
+    label: (account: AccountSummary) => string
+  }
 }) {
-  const listId = useId()
   const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
 
   const chosen = selected
     .map((id) => accounts.find((a) => a.id === id))
     .filter((a): a is AccountSummary => !!a)
+  const available = accounts.filter((a) => a.id !== excludeId && !selected.includes(a.id))
   const needle = query.trim().toLowerCase()
-  const options = accounts
-    .filter((a) => a.id !== excludeId && !selected.includes(a.id))
+  const options = available
     .filter((a) => !needle || `${a.domainName} ${a.email} ${a.username ?? ''}`.toLowerCase().includes(needle))
     .slice(0, 40)
-  const current = Math.min(active, Math.max(options.length - 1, 0))
 
   const pick = (account: AccountSummary): void => {
     onChange(multiple ? [...selected, account.id] : [account.id])
     setQuery('')
-    setActive(0)
-    if (!multiple) setOpen(false)
-  }
-
-  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      setOpen(true)
-      if (options.length) setActive((current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length)
-    } else if (event.key === 'Enter' && open && options[current]) {
-      event.preventDefault()
-      pick(options[current])
-    } else if (event.key === 'Escape' && open) {
-      event.preventDefault()
-      event.stopPropagation()
-      setOpen(false)
-    }
   }
 
   return (
@@ -172,84 +164,87 @@ export function AccountPicker({
       {chosen.length > 0 && (
         <ul className="space-y-1.5">
           {chosen.map((account) => (
-            <li key={account.id} className="frost flex h-11 items-center gap-3 rounded-lg pr-1.5 pl-2.5">
-              <SiteTile name={account.domainName} size="sm" className="size-7 rounded-[8px] text-[12px]" />
-              <span className="min-w-0 flex-1 truncate text-[13.5px]">
-                <span className="font-medium text-heading">{account.domainName}</span>
-                <span className="ml-2 text-muted-foreground">{account.email}</span>
-              </span>
-              <IconButton
-                label={`Remove ${account.domainName}`}
-                size="icon-sm"
-                onClick={() => onChange(selected.filter((id) => id !== account.id))}
-              >
-                <X size={13} />
-              </IconButton>
+            <li key={account.id} className={cn('frost rounded-lg pr-1.5 pl-2.5', notes && 'pb-2')}>
+              <div className="flex h-11 items-center gap-3">
+                <SiteTile name={account.domainName} size="sm" className="size-7 rounded-[8px] text-[12px]" />
+                <span className="min-w-0 flex-1 truncate text-[13.5px]">
+                  <span className="font-medium text-heading">{account.domainName}</span>
+                  <span className="ml-2 text-muted-foreground">{account.email}</span>
+                </span>
+                <IconButton
+                  label={`Remove ${account.domainName}`}
+                  size="icon-sm"
+                  onClick={() => onChange(selected.filter((id) => id !== account.id))}
+                >
+                  <X size={13} />
+                </IconButton>
+              </div>
+              {notes && (
+                <input
+                  aria-label={notes.label(account)}
+                  placeholder={notes.placeholder}
+                  value={notes.value(account.id)}
+                  maxLength={200}
+                  onChange={(event) => notes.onChange(account.id, event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={cn(fieldClass, 'ml-10 h-8 w-[calc(100%-2.5rem-0.375rem)] text-[13px]')}
+                />
+              )}
             </li>
           ))}
         </ul>
       )}
       {(multiple || chosen.length === 0) && (
-        <div className="relative">
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setActive(0)
-              setOpen(true)
-            }}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setOpen(false)}
-            onKeyDown={onKeyDown}
+        <Combobox.Root
+          items={available}
+          filteredItems={options}
+          // Picking adds the account (above); the search itself never holds a value.
+          value={null}
+          onValueChange={(account: AccountSummary | null) => {
+            if (account) pick(account)
+          }}
+          inputValue={query}
+          onInputValueChange={(value, details) => {
+            // Don't put the picked account's name in the search box.
+            if (details.reason !== 'item-press') setQuery(value)
+          }}
+          itemToStringLabel={(account: AccountSummary) => account.domainName}
+          isItemEqualToValue={(a: AccountSummary, b: AccountSummary) => a.id === b.id}
+          autoHighlight
+        >
+          <Combobox.Input
             placeholder={chosen.length ? 'Add another account' : placeholder}
-            role="combobox"
-            aria-expanded={open}
-            aria-controls={listId}
-            aria-autocomplete="list"
-            aria-activedescendant={open && options[current] ? `${listId}-${options[current].id}` : undefined}
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
             className={cn(fieldClass, 'h-10')}
           />
-          {open && (
-            <ul
-              id={listId}
-              role="listbox"
-              className="glass absolute inset-x-0 top-full z-[100] mt-1.5 max-h-60 overflow-y-auto rounded-xl p-1"
-            >
-              {options.length === 0 ? (
-                <li className="px-3 py-2 text-[13px] text-muted-foreground">No matching account</li>
-              ) : (
-                options.map((account, index) => (
-                  <li
-                    key={account.id}
-                    id={`${listId}-${account.id}`}
-                    role="option"
-                    aria-selected={index === current}
-                    // mousedown, not click: keeps focus in the input.
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      pick(account)
-                    }}
-                    onMouseMove={() => setActive(index)}
-                    className={cn(
-                      'flex h-10 cursor-pointer items-center gap-3 rounded-lg px-2.5 text-[13.5px]',
-                      index === current && 'bg-primary/10 dark:bg-primary/15'
-                    )}
-                  >
-                    <SiteTile name={account.domainName} size="sm" className="size-6 rounded-[7px] text-[11px]" />
-                    <span className="min-w-0 flex-1 truncate">
-                      <span className="font-medium text-heading">{account.domainName}</span>
-                      <span className="ml-2 text-muted-foreground">{account.email}</span>
-                    </span>
-                  </li>
-                ))
-              )}
-            </ul>
-          )}
-        </div>
+          <Combobox.Portal>
+            <Combobox.Positioner sideOffset={6} collisionPadding={12} className="z-[300] outline-none">
+              <Combobox.Popup className="glass max-h-[min(15rem,var(--available-height))] w-(--anchor-width) overflow-y-auto overscroll-contain rounded-xl p-1 outline-none">
+                <Combobox.Empty className="px-3 py-2 text-[13px] text-muted-foreground empty:hidden">
+                  {options.length === 0 ? 'No matching account' : null}
+                </Combobox.Empty>
+                <Combobox.List>
+                  {(account: AccountSummary) => (
+                    <Combobox.Item
+                      key={account.id}
+                      value={account}
+                      className="flex h-10 cursor-pointer items-center gap-3 rounded-lg px-2.5 text-[13.5px] outline-none data-highlighted:bg-primary/10 dark:data-highlighted:bg-primary/15"
+                    >
+                      <SiteTile name={account.domainName} size="sm" className="size-6 rounded-[7px] text-[11px]" />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium text-heading">{account.domainName}</span>
+                        <span className="ml-2 text-muted-foreground">{account.email}</span>
+                      </span>
+                    </Combobox.Item>
+                  )}
+                </Combobox.List>
+              </Combobox.Popup>
+            </Combobox.Positioner>
+          </Combobox.Portal>
+        </Combobox.Root>
       )}
     </div>
   )

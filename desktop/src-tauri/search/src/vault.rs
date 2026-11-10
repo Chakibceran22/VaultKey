@@ -86,6 +86,9 @@ pub struct AccountSecret {
 pub struct DeviceLink {
     pub account_id: i64,
     pub device_id: i64,
+    /// What it does there ("mobile app + authenticator"), decrypted; may be empty.
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,8 +108,32 @@ pub struct Service {
     pub name: String,
     #[serde(default)]
     pub url: String,
+    /// The accounts it uses, in order, each with its role there (schema v5).
+    #[serde(default)]
+    pub accounts: Vec<ServiceAccount>,
+    /// Its one account, before v5 (snapshots and fixtures written then).
     #[serde(default)]
     pub account_id: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccount {
+    pub account_id: i64,
+    /// "admin", "deploy only"…, decrypted; may be empty.
+    #[serde(default)]
+    pub role: String,
+}
+
+impl Service {
+    /// Its accounts and their roles, whichever way they were given.
+    pub fn uses(&self) -> Vec<(i64, &str)> {
+        if self.accounts.is_empty() {
+            self.account_id.map(|id| (id, "")).into_iter().collect()
+        } else {
+            self.accounts.iter().map(|a| (a.account_id, a.role.as_str())).collect()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -119,6 +146,9 @@ pub struct ProjectSecret {
     /// "file", or anything else for a text secret.
     pub kind: String,
     pub name: String,
+    /// What it's for, its scopes, decrypted; may be empty.
+    #[serde(default)]
+    pub description: String,
 }
 
 /// Display names, as `components/accounts/kinds.ts` shows them.

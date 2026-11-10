@@ -32,7 +32,7 @@ export function IconButton({
             variant={variant}
             size={size}
             aria-label={label}
-            className={cn('rounded-lg active:scale-[0.94]', className)}
+            className={cn('rounded-lg duration-100 active:scale-[0.94]', className)}
             {...props}
           />
         }

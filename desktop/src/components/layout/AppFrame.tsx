@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { AnimatePresence, m } from 'framer-motion'
 import { FileArrowDown, LockKey, MagnifyingGlass } from '@phosphor-icons/react'
-import { useQueryClient } from '@tanstack/react-query'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useAuth } from '@renderer/store/auth'
 import { IconButton, Kbd } from '@renderer/components/ui/icon-button'
-import { plural, refreshVault } from '@renderer/hooks/use-vault'
+import { plural } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { IS_MAC, isModKey, isOverlayOpen, MOD } from '@renderer/lib/dom'
 import { useDropTarget } from '@renderer/lib/drop-target'
@@ -15,6 +14,7 @@ import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
 import { cn } from '@renderer/lib/utils'
 import { SearchConsole } from '@renderer/components/search/SearchConsole'
+import { HistoryGestures } from './HistoryGestures'
 import { ThemeToggle } from './ThemeToggle'
 
 const SECTIONS = [
@@ -29,8 +29,8 @@ const SECTIONS = [
  */
 export function AppFrame() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { pathname } = useLocation()
+  const { pathname, key } = useLocation()
+  const navigationType = useNavigationType()
   const { logout } = useAuth()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const paletteRef = useRef(paletteOpen)
@@ -44,10 +44,35 @@ export function AppFrame() {
     navigate('/login')
   }, [logout, navigate])
 
-  // A new page starts at the top.
+  // Where each page was scrolled to, so back and forward return to it.
+  const scrolls = useRef(new Map<string, number>())
+  const keyRef = useRef(key)
+  keyRef.current = key
   useEffect(() => {
-    mainRef.current?.scrollTo({ top: 0 })
-  }, [pathname])
+    const main = mainRef.current
+    if (!main) return
+    const remember = (): void => {
+      scrolls.current.set(keyRef.current, main.scrollTop)
+    }
+    main.addEventListener('scroll', remember, { passive: true })
+    return () => main.removeEventListener('scroll', remember)
+  }, [])
+
+  // A new page starts at the top; one gone back or forward to, where it was left.
+  const lastPath = useRef(pathname)
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    const saved = navigationType === 'POP' ? scrolls.current.get(key) : undefined
+    if (saved !== undefined) {
+      main.scrollTo({ top: saved })
+      // Its content may only be laid out a frame later.
+      requestAnimationFrame(() => main.scrollTo({ top: saved }))
+    } else if (pathname !== lastPath.current) {
+      main.scrollTo({ top: 0 })
+    }
+    lastPath.current = pathname
+  }, [key, pathname, navigationType])
 
   // ⌘K search, ⌘1–3 sections, ⌘L lock.
   useEffect(() => {
@@ -94,13 +119,10 @@ export function AppFrame() {
         return
       }
       try {
-        const report = unwrap(await api.importDroppedFiles(target.projectId, null))
-        await refreshVault(queryClient)
-        if (report.imported.length) {
-          toast.success(`${plural(report.imported.length, 'file')} added to ${target.name}`)
-          navigate(`/projects/${target.projectId}?show=files`, { replace: true })
-        }
-        for (const skipped of report.skipped) toast.error(`${skipped.name}: ${skipped.reason}`)
+        // Into the project's upload dialog, where each gets a description before it is added.
+        const staged = unwrap(await api.stageDroppedFiles())
+        for (const skipped of staged.skipped) toast.error(`${skipped.name}: ${skipped.reason}`)
+        if (staged.files.length) useDropTarget.getState().setDropped(staged)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : `Couldn’t add ${plural(payload.names.length, 'file')}`)
       }
@@ -109,7 +131,7 @@ export function AppFrame() {
       alive = false
       offs.forEach((off) => off())
     }
-  }, [navigate, queryClient])
+  }, [])
 
   return (
     <div className="flex h-dvh flex-col">
@@ -154,11 +176,12 @@ export function AppFrame() {
         </IconButton>
       </header>
 
-      <main ref={mainRef} className="@container min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <main ref={mainRef} className="@container min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
         <Outlet />
       </main>
 
       <SearchConsole open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <HistoryGestures page={mainRef} />
 
       <AnimatePresence>
         {dragging > 0 && (
