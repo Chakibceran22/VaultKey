@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  CaretRight,
   DownloadSimple,
   Eye,
   EyeSlash,
@@ -16,6 +17,7 @@ import {
 import type { Icon } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AccountSummary, SecretMeta, Service } from '@renderer/shared/contracts'
+import { Expand } from '@renderer/components/accounts/parts'
 import { CopyAction } from '@renderer/components/ui/copy'
 import { IconButton } from '@renderer/components/ui/icon-button'
 import { SiteTile } from '@renderer/components/ui/misc'
@@ -24,10 +26,9 @@ import { formatSize, hostOf } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { credentialsService } from '@renderer/lib/credentialsService'
 import { unwrap } from '@renderer/lib/ipc'
+import { cn } from '@renderer/lib/utils'
 import { formatRelativeTime } from '@renderer/lib/password'
 import { toast } from '@renderer/lib/toast'
-
-const ROW = 'grid items-center gap-x-4 px-4 py-3'
 
 /** An account a service uses, its role there, and what it signs in with (if anything). */
 export interface ServiceAccountView {
@@ -36,26 +37,38 @@ export interface ServiceAccountView {
   via: AccountSummary | undefined
 }
 
-const COLUMNS = 'grid-cols-[2rem_minmax(0,5fr)_minmax(0,6fr)_6.5rem]'
+/** The copy buttons' slot: room for two, whatever a row has to copy. */
+const COPIES = 'flex w-[3.625rem] shrink-0 items-center justify-end gap-0.5'
 
 /**
- * A service: its address, the accounts it uses (the main one first, each with its
- * role there), and quick copies for each.
+ * A service, built to stay readable at 30–40 per project: one 44 px line (name and
+ * address, the main account and how many more), copies on hover or focus, and
+ * everything else one click away, expanded in place: every account with its role
+ * and its own copies, and the secrets and files kept for it.
  */
 export function ServiceRow({
   service,
   accounts,
+  kept,
+  expanded,
+  onToggle,
   onEdit,
   onDelete
 }: {
   service: Service
   accounts: ServiceAccountView[]
+  /** Its secrets and files. */
+  kept: SecretMeta[]
+  expanded: boolean
+  onToggle: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [main, ...others] = accounts
+  const [main] = accounts
+  const more = accounts.length - 1
+  const host = hostOf(service.url)
 
   // Decrypted only when copied.
   const passwordOf = (account: AccountSummary) => async (): Promise<string> => {
@@ -67,19 +80,6 @@ export function ServiceRow({
     if (!credential) throw new Error('This password could not be decrypted.')
     return credential.password
   }
-  const detail = ({ account, role, via }: ServiceAccountView): string =>
-    [via ? `${account.domainName}, via ${via.domainName}` : account.domainName, role].filter(Boolean).join(' · ')
-  const accountCell = (view: ServiceAccountView, small = false) => (
-    <button
-      type="button"
-      onClick={() => navigate(`/accounts/${view.account.id}`)}
-      className="min-w-0 cursor-pointer text-left"
-      title={view.role || undefined}
-    >
-      <p className={`truncate text-heading hover:underline ${small ? 'text-[13.5px]' : 'text-[14px]'}`}>{view.account.email}</p>
-      <p className={`truncate text-muted-foreground ${small ? 'text-[12.5px]' : 'text-[13px]'}`}>{detail(view)}</p>
-    </button>
-  )
   const copies = (view: ServiceAccountView) => (
     <>
       <CopyAction label={`Copy ${view.account.domainName} email`} value={view.account.email} />
@@ -88,16 +88,40 @@ export function ServiceRow({
   )
 
   return (
-    <li>
-      <div className={`${ROW} ${COLUMNS}`}>
-        <SiteTile name={service.name} size="sm" />
-        <div className="min-w-0">
-          <p className="truncate text-[14.5px] font-medium text-heading">{service.name}</p>
-          <p className="truncate text-[13px] text-muted-foreground">{hostOf(service.url) || 'No address'}</p>
-        </div>
-        {main ? accountCell(main) : <p className="text-[13.5px] text-muted-foreground">No account linked</p>}
-        <div className="flex items-center justify-end gap-0.5">
+    <li className={cn('group transition-colors duration-100', expanded && 'bg-secondary/30')}>
+      {/* Fixed-width slots after the button (copies, menu, chevron), so every row's
+          columns line up whatever it has to copy. */}
+      <div className="flex h-11 items-center pr-2 transition-colors duration-100 hover:bg-secondary/40">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+          className="grid h-full min-w-0 flex-1 cursor-pointer grid-cols-[1.5rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-3 pl-4 text-left outline-none focus-visible:bg-secondary/60"
+        >
+          <SiteTile name={service.name} size="sm" className="size-6 rounded-[7px] text-[11px]" />
+          <span className="truncate">
+            <span className="text-[14px] font-medium text-heading">{service.name}</span>
+            {host && <span className="ml-2 text-[13px] text-muted-foreground">{host}</span>}
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[13.5px]">
+            {main ? (
+              <>
+                <span className="truncate text-foreground">{main.account.email}</span>
+                {more > 0 && (
+                  <span className="shrink-0 rounded-md bg-secondary px-1.5 text-[11.5px] leading-5 text-muted-foreground tabular-nums dark:bg-white/8">
+                    +{more}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="truncate text-muted-foreground/70">No account linked</span>
+            )}
+          </span>
+        </button>
+        <div className={`${COPIES} opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100`}>
           {main && copies(main)}
+        </div>
+        <div className="flex shrink-0 items-center">
           <RowMenu label={`More actions for ${service.name}`}>
             <RowMenuItem icon={PencilSimple} onClick={onEdit}>
               Edit service
@@ -113,15 +137,60 @@ export function ServiceRow({
             </RowMenuItem>
           </RowMenu>
         </div>
+        {/* A second way to the same toggle, for the pointer; the button above is the accessible one. */}
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          onClick={onToggle}
+          className="flex h-full w-6 shrink-0 cursor-pointer items-center justify-center"
+        >
+          <CaretRight
+            size={12}
+            weight="bold"
+            className={cn(
+              'text-muted-foreground transition-transform duration-150 motion-reduce:transition-none',
+              expanded && 'rotate-90 text-foreground'
+            )}
+          />
+        </button>
       </div>
-      {others.map((view) => (
-        <div key={view.account.id} className={`grid items-center gap-x-4 px-4 pb-2.5 ${COLUMNS}`}>
-          <span />
-          <span />
-          {accountCell(view, true)}
-          <div className="flex items-center justify-end gap-0.5 pr-8">{copies(view)}</div>
+      <Expand open={expanded}>
+        <div className="space-y-1 pr-2 pb-3 pl-[3.25rem]">
+          {accounts.map((view) => (
+            <div key={view.account.id} className="flex items-center gap-0 py-1">
+              <button
+                type="button"
+                onClick={() => navigate(`/accounts/${view.account.id}`)}
+                className="min-w-0 flex-1 cursor-pointer text-left"
+              >
+                <p className="truncate text-[13.5px] text-heading hover:underline">{view.account.email}</p>
+                <p className="truncate text-[12.5px] text-muted-foreground">
+                  {[view.via ? `${view.account.domainName}, via ${view.via.domainName}` : view.account.domainName, view.role]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              </button>
+              <div className={COPIES}>{copies(view)}</div>
+              {/* Under the menu and the chevron. */}
+              <span aria-hidden="true" className="w-[3.25rem] shrink-0" />
+            </div>
+          ))}
+          {accounts.length === 0 && (
+            <p className="py-1 text-[13px] text-muted-foreground">
+              No account linked.{' '}
+              <button type="button" onClick={onEdit} className="cursor-pointer text-primary hover:underline">
+                Link one
+              </button>
+            </p>
+          )}
+          {kept.length > 0 && (
+            <p className="truncate pt-1 text-[12.5px] text-muted-foreground">
+              Keeps <span className="font-mono text-foreground/85">{kept.map((k) => k.name).join(', ')}</span>
+            </p>
+          )}
         </div>
-      ))}
+      </Expand>
     </li>
   )
 }
@@ -173,31 +242,31 @@ export function SecretRow({
   }
 
   const where = serviceName ?? 'Whole project'
+  const open = shown !== null
   return (
-    <li>
-      <div className={`${ROW} grid-cols-[2rem_minmax(0,1fr)_auto_auto]`}>
-        <span className="flex size-8 items-center justify-center rounded-[9px] bg-secondary text-muted-foreground">
-          <RowIcon size={16} />
+    <li className="group">
+      {/* One 44 px line, columns in fixed slots so every row lines up. */}
+      <div className="flex h-11 items-center gap-3 pr-2 pl-4 transition-colors duration-100 hover:bg-secondary/40">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-muted-foreground dark:bg-white/8">
+          <RowIcon size={13} />
         </span>
-        <div className="min-w-0">
-          <p className="truncate font-mono text-[13.5px] text-heading" data-selectable>
+        <p className="min-w-0 flex-1 truncate" title={secret.description || undefined}>
+          <span className="font-mono text-[13.5px] text-heading" data-selectable>
             {secret.name}
-          </p>
-          {secret.description && (
-            <p className="truncate text-[12.5px] text-foreground/80" title={secret.description}>
-              {secret.description}
-            </p>
-          )}
-          <p className="truncate text-[12.5px] text-muted-foreground">
-            {isFile ? `${formatSize(secret.size)}, ${serviceName ?? 'whole project'}` : where}
-          </p>
-        </div>
-        <span className="hidden text-[12.5px] text-muted-foreground tabular-nums @min-[40rem]:inline">
-          {isFile ? 'Added' : 'Edited'} {formatRelativeTime(secret.updatedAt).toLowerCase()}
+          </span>
+          {secret.description && <span className="ml-2 text-[13px] text-muted-foreground">{secret.description}</span>}
+        </p>
+        <span className="hidden w-44 shrink-0 truncate text-right text-[12.5px] text-muted-foreground tabular-nums @min-[44rem]:block">
+          {isFile ? `${formatSize(secret.size)} · ${where}` : where} · {formatRelativeTime(secret.updatedAt).toLowerCase()}
         </span>
-        <div className="flex items-center gap-0.5">
-          <IconButton label={shown !== null ? 'Hide' : isFile ? 'Show contents' : 'Show value'} size="icon-sm" onClick={() => void toggleShown()}>
-            {shown !== null ? <EyeSlash size={15} /> : <Eye size={15} />}
+        <div
+          className={cn(
+            'flex w-[5.375rem] shrink-0 items-center justify-end gap-0.5 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100',
+            open ? 'opacity-100' : 'opacity-0'
+          )}
+        >
+          <IconButton label={open ? 'Hide' : isFile ? 'Show contents' : 'Show value'} size="icon-sm" onClick={() => void toggleShown()}>
+            {open ? <EyeSlash size={15} /> : <Eye size={15} />}
           </IconButton>
           <CopyAction label={isFile ? 'Copy contents' : 'Copy value'} value={reveal} secret />
           {isFile && (
@@ -205,24 +274,24 @@ export function SecretRow({
               <DownloadSimple size={15} />
             </IconButton>
           )}
-          <RowMenu label={`More actions for ${secret.name}`}>
-            <RowMenuItem icon={PencilSimple} onClick={onEdit}>
-              {isFile ? 'Rename or move' : 'Edit secret'}
-            </RowMenuItem>
-            {!isFile && (
-              <RowMenuItem icon={DownloadSimple} onClick={() => void save()}>
-                Save as a file
-              </RowMenuItem>
-            )}
-            <RowMenuSeparator />
-            <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
-              {isFile ? 'Delete file' : 'Delete secret'}
-            </RowMenuItem>
-          </RowMenu>
         </div>
+        <RowMenu label={`More actions for ${secret.name}`}>
+          <RowMenuItem icon={PencilSimple} onClick={onEdit}>
+            {isFile ? 'Rename or move' : 'Edit secret'}
+          </RowMenuItem>
+          {!isFile && (
+            <RowMenuItem icon={DownloadSimple} onClick={() => void save()}>
+              Save as a file
+            </RowMenuItem>
+          )}
+          <RowMenuSeparator />
+          <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
+            {isFile ? 'Delete file' : 'Delete secret'}
+          </RowMenuItem>
+        </RowMenu>
       </div>
       {shown !== null && (
-        <div className="pr-4 pb-3 pl-16">
+        <div className="pr-4 pb-3 pl-[3.25rem]">
           <pre
             data-selectable
             className="reveal-in max-h-56 overflow-auto rounded-lg border bg-background/60 p-3 font-mono text-[12.5px] leading-relaxed break-all whitespace-pre-wrap text-heading dark:bg-background/30"

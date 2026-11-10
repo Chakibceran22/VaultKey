@@ -208,12 +208,15 @@ pub fn build(vault: &Vault) -> Graph {
         let kind = if file { NodeKind::File } else { NodeKind::ProjectSecret };
         let project = project_name.get(&s.project_id).copied().unwrap_or("a project");
         let subtitle = format!("{} in {project}", if file { "File" } else { "Secret" });
-        let mut text = format!("{}: {} of the project {project}", s.name, if file { "file" } else { "secret" });
+        // What it does first (its description), then what it is called and where.
+        let mut text = if s.description.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{}. ", s.description.trim())
+        };
+        text += &format!("{}, {} of the project {project}", s.name, if file { "file" } else { "secret" });
         if let Some(service) = s.service_id.and_then(|id| service_name.get(&id)) {
             text += &format!(", for {service}");
-        }
-        if !s.description.is_empty() {
-            text += &format!(". {}", s.description);
         }
         let to = format!("/projects/{}?show={}", s.project_id, if file { "files" } else { "secrets" });
         // Its description too: "the root ssh key" finds id_ed25519 described that way.

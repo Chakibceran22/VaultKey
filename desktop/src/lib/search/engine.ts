@@ -1,4 +1,4 @@
-import { plain, words, type GraphNode, type VaultGraph } from './graph'
+import { plain, squash, words, type GraphNode, type VaultGraph } from './graph'
 import type { NodeKind, PathStep, SearchHit, SearchNode, SearchResponse, Understood } from './types'
 
 /*
@@ -64,8 +64,9 @@ intent('secret secrets token tokens key keys api env variable variables cle cles
 })
 intent('apikey apikeys', { kinds: ['project-secret', 'account-secret'], label: 'API keys', weight: 3 })
 intent('sshkey sshkeys privatekey privatekeys', { kinds: ['file', 'project-secret', 'account-secret'], label: 'SSH and private keys', weight: 3 })
-intent('sign signs signed', { kinds: ['account'], label: 'Accounts that sign in with it', via: ['used to sign in to'], weight: 2 })
-intent('recovers recover', { kinds: ['account'], label: 'Accounts it recovers', via: ['recovers'], weight: 2 })
+// Relations read both ways: "what signs in with google" and "what does figma sign in with".
+intent('sign signs signed', { kinds: ['account'], label: 'Sign-in links', via: ['used to sign in to', 'signs in with'], weight: 2 })
+intent('recovers recover', { kinds: ['account'], label: 'Recovery links', via: ['recovers', 'recovered by'], weight: 2 })
 intent('note notes', { kinds: ['note'], label: 'Notes', weight: 2 })
 intent('file files ssh certificate certificates cert pem fichier fichiers', { kinds: ['file'], label: 'Files', weight: 2 })
 intent('project projects projet projets', { kinds: ['project'], label: 'Projects', weight: 1 })
@@ -211,11 +212,14 @@ export function searchGraph(graph: VaultGraph, query: string, limit = 40): Searc
   const anchors: { words: string; found: { node: GraphNode; quality: number }[] }[] = []
   const unmatched: string[] = []
   // A precise word that asks for a kind can also be a name: "yubikey" is the
-  // YubiKey too. Not generic ones ("key"), nor words of a phrase ("ssh key").
+  // YubiKey too, when nothing else in the question is ("recovery codes for google"
+  // is not about the note "Recovery phrase"). Not generic words ("key"), nor words
+  // of a phrase ("ssh key").
+  const soft: typeof anchors = []
   for (const w of wanted) {
     if (w.intent.weight < 3 || w.words.length !== 1) continue
     const found = match(graph, w.words[0]).filter((f) => f.quality >= 0.85)
-    if (found.length) anchors.push({ words: w.words[0], found })
+    if (found.length) soft.push({ words: w.words[0], found })
   }
   for (let i = 0; i < names.length; i++) {
     const pair = names[i + 1] ? names[i] + names[i + 1] : ''
@@ -229,6 +233,7 @@ export function searchGraph(graph: VaultGraph, query: string, limit = 40): Searc
     if (found.length) anchors.push({ words: names[i], found })
     else unmatched.push(names[i])
   }
+  if (anchors.length === 0) anchors.push(...soft)
 
   // The most precise of the wanted kinds are the answer; the others only qualify
   // it ("device authentication": devices, reached through a sign-in step).
@@ -267,8 +272,11 @@ export function searchGraph(graph: VaultGraph, query: string, limit = 40): Searc
         .sort((a, b) => b.hops - a.hops || b.score - a.score)[0]
       const path = pathTo(graph, from.r, id)
       const reachedVia = path.at(-1)?.via
-      // A record whose whole name was typed ("games" → the Games group) comes first.
-      if (words(node.title).join(' ') === names.join(' ')) score += 0.15
+      // A record whose whole name was typed comes first ("games" → the Games group),
+      // even typed in two words ("lumen post" is the project Lumenpost).
+      if (words(node.title).join(' ') === names.join(' ') || (names.length > 0 && squash(node.title) === names.join(''))) {
+        score += 0.15
+      }
       let answer = false
       if (answers.length) {
         const fitting = answers.find((intent) => fits(node, intent, reachedVia))

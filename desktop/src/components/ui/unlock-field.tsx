@@ -66,7 +66,7 @@ export function UnlockField({
           type="submit"
           aria-label={submitLabel}
           disabled={busy}
-          className="ml-1 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_4px_12px_-4px_color-mix(in_oklab,var(--primary)_70%,transparent)] transition-[scale,background-color] duration-150 ease-smooth hover:bg-primary/90 active:scale-95 disabled:cursor-default motion-reduce:active:scale-100"
+          className="ml-1 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary text-primary-foreground transition-[scale,background-color] duration-150 ease-smooth hover:bg-primary/90 active:scale-95 disabled:cursor-default motion-reduce:active:scale-100"
         >
           {busy ? <Spinner size={18} /> : <ArrowRight size={18} weight="bold" />}
         </button>

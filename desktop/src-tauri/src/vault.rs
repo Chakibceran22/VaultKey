@@ -34,7 +34,8 @@ use crate::validation::{
     validate_service,
 };
 use crate::validation::{
-    DeviceLinkInput, MAX_DESCRIPTION, MAX_DEVICE_NOTE, StagedFileInput, validate_optional_text,
+    DeviceLinkInput, MAX_DESCRIPTION, MAX_DEVICE_NOTE, StagedFileInput, validate_file_name,
+    validate_optional_text,
 };
 use crate::workspace::{self, AccountLink, NewSecret, Sealed, Workspace};
 
@@ -143,6 +144,14 @@ pub struct StagedList {
 
 /// At most this many files wait in the upload dialog at once.
 const MAX_STAGED: usize = 100;
+
+/// A file to encrypt into a project: where it is, the name to keep it under (its
+/// own when `None`), and its description.
+struct Upload {
+    path: PathBuf,
+    name: Option<String>,
+    description: String,
+}
 
 impl Staged {
     fn view(&self) -> Vec<StagedView> {
@@ -665,28 +674,46 @@ impl Vault {
         service_id: Option<i64>,
         paths: &[PathBuf],
     ) -> VaultResult<ImportReport> {
-        let files: Vec<(PathBuf, String)> = paths.iter().map(|p| (p.clone(), String::new())).collect();
+        let files: Vec<Upload> = paths
+            .iter()
+            .map(|path| Upload {
+                path: path.clone(),
+                name: None,
+                description: String::new(),
+            })
+            .collect();
         self.import_described(project_id, service_id, &files)
     }
 
-    /// Encrypts files into a project, each with its description (sealed too).
+    /// Encrypts files into a project, each with its name (its own, or the one given in
+    /// the upload dialog) and its description (sealed too). Names and descriptions are
+    /// all checked before anything is added.
     fn import_described(
         &self,
         project_id: i64,
         service_id: Option<i64>,
-        files: &[(PathBuf, String)],
+        files: &[Upload],
     ) -> VaultResult<ImportReport> {
         let key = self.session_key()?;
         let project_id = validate_id(project_id, "project id")?;
         let service_id = validate_optional_id(service_id, "service id")?;
+        let checked = files
+            .iter()
+            .map(|file| {
+                let name = match &file.name {
+                    Some(name) => validate_file_name(name)?,
+                    None => file
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "file".to_owned()),
+                };
+                let description = validate_optional_text(&file.description, "description", MAX_DESCRIPTION)?;
+                Ok((&file.path, name, seal_note(&description, &key)?))
+            })
+            .collect::<VaultResult<Vec<_>>>()?;
         let mut report = ImportReport::default();
-        for (path, description) in files {
-            let description = validate_optional_text(description, "description", MAX_DESCRIPTION)?;
-            let description = seal_note(&description, &key)?;
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "file".to_owned());
+        for (path, name, description) in checked {
             let reason = match fs::metadata(path) {
                 Ok(meta) if !meta.is_file() => Some("Only files can be added, not folders."),
                 Ok(meta) if meta.len() > MAX_FILE_BYTES => Some("Files can be at most 25 MB."),
@@ -848,7 +875,7 @@ impl Vault {
         chosen: &[StagedFileInput],
     ) -> VaultResult<ImportReport> {
         self.require_unlocked()?;
-        let files: Vec<(PathBuf, String)> = {
+        let files: Vec<Upload> = {
             let staged = lock_or_recover(&self.staged);
             chosen
                 .iter()
@@ -857,7 +884,12 @@ impl Vault {
                         .files
                         .iter()
                         .find(|f| f.token == c.token)
-                        .map(|f| (f.path.clone(), c.description.clone()))
+                        .map(|f| Upload {
+                            path: f.path.clone(),
+                            // Unchanged in the dialog: keep its own name.
+                            name: c.name.clone().filter(|name| *name != f.name),
+                            description: c.description.clone(),
+                        })
                         .ok_or_else(|| VaultError::invalid_input("A file is no longer in the list. Add it again."))
                 })
                 .collect::<VaultResult<_>>()?
@@ -2690,7 +2722,18 @@ mod tests {
         assert_eq!(staged.skipped.len(), 1, "a folder is refused");
         let token = |name: &str| staged.files.iter().find(|f| f.name == name).unwrap().token;
 
-        // Only the key, with its description; the .env stays in the dialog.
+        // A name with a separator is refused before anything is added.
+        assert_eq!(
+            code(vault.import_staged(
+                acme,
+                None,
+                &[StagedFileInput { token: token("id_ed25519"), description: String::new(), name: Some("../keys/x".into()) }],
+            )),
+            ErrorCode::InvalidInput
+        );
+        assert!(vault.workspace().unwrap().secrets.is_empty());
+
+        // Only the key, renamed, with its description; the .env stays in the dialog.
         let report = vault
             .import_staged(
                 acme,
@@ -2698,17 +2741,30 @@ mod tests {
                 &[StagedFileInput {
                     token: token("id_ed25519"),
                     description: "root SSH key for prod".into(),
+                    name: Some("  prod_root_ed25519 ".into()),
                 }],
             )
             .unwrap();
         assert_eq!(report.imported.len(), 1);
         let secrets = vault.workspace().unwrap().secrets;
-        assert_eq!((secrets[0].name.as_str(), secrets[0].description.as_str()), ("id_ed25519", "root SSH key for prod"));
+        assert_eq!(
+            (secrets[0].name.as_str(), secrets[0].description.as_str()),
+            ("prod_root_ed25519", "root SSH key for prod"),
+            "renamed in the dialog (trimmed)"
+        );
         assert_eq!(vault.unstage_file(-1).unwrap().files.len(), 1);
+
+        // Its own name, unchanged in the dialog, is kept as it is.
+        vault
+            .import_staged(acme, None, &[StagedFileInput { token: token("prod.env"), description: String::new(), name: Some("prod.env".into()) }])
+            .unwrap();
+        assert!(vault.workspace().unwrap().secrets.iter().any(|s| s.name == "prod.env"));
+        let staged = vault.stage_files(vec![key.clone()]).unwrap();
+        let token = |name: &str| staged.files.iter().find(|f| f.name == name).unwrap().token;
 
         // A token not (or no longer) in the list imports nothing.
         assert_eq!(
-            code(vault.import_staged(acme, None, &[StagedFileInput { token: token("id_ed25519"), description: String::new() }])),
+            code(vault.import_staged(acme, None, &[StagedFileInput { token: token("id_ed25519") + 1000, description: String::new(), name: None }])),
             ErrorCode::InvalidInput
         );
 

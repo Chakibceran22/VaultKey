@@ -101,7 +101,7 @@ export function Expand({ open, children }: { open: boolean; children: ReactNode 
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: 'auto', opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           className="overflow-hidden"
         >
           {children}
@@ -197,6 +197,9 @@ export function Chip({ item }: { item: ChipItem }) {
 
 /** A labelled line of related records, each a chip that jumps to it. */
 export function LinkLine({ label, items, empty }: { label: string; items: ChipItem[]; empty?: string }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? items : items.slice(0, CHIPS_SHOWN)
+  const hidden = items.length - shown.length
   return (
     <div className="grid min-h-10 grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-4 py-1">
       <span className="text-[13px] text-muted-foreground">{label}</span>
@@ -204,7 +207,16 @@ export function LinkLine({ label, items, empty }: { label: string; items: ChipIt
         {items.length === 0 && empty ? (
           <span className="text-[13px] text-muted-foreground/70">{empty}</span>
         ) : (
-          items.map((item) => <Chip key={item.key} item={item} />)
+          shown.map((item) => <Chip key={item.key} item={item} />)
+        )}
+        {items.length > CHIPS_SHOWN && (
+          <button
+            type="button"
+            onClick={() => setAll(!all)}
+            className="inline-flex h-7 cursor-pointer items-center rounded-lg px-2 text-[12.5px] text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+          >
+            {all ? 'Show fewer' : `+${hidden} more`}
+          </button>
         )}
       </div>
     </div>
@@ -234,15 +246,26 @@ export function FormLine({
  * One kind of connection in a record's side column: a quiet label, then each
  * related record as a row that opens it, or a plain line when there are none.
  */
+/** A side panel's group shows this many, then "N more…" (Google can sign in to 30 sites). */
+const GROUP_SHOWN = 5
+/** A line of chips shows this many, then "+N more". */
+const CHIPS_SHOWN = 8
+
 export function RelatedGroup({ label, items, empty }: { label: string; items: ChipItem[]; empty: string }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? items : items.slice(0, GROUP_SHOWN)
+  const hidden = items.length - shown.length
   return (
     <div className="px-2 py-2.5">
-      <p className="px-2 pb-1 text-[12px] font-medium text-muted-foreground">{label}</p>
+      <p className="flex items-baseline justify-between px-2 pb-1 text-[12px] font-medium text-muted-foreground">
+        {label}
+        {items.length > GROUP_SHOWN && <span className="font-normal tabular-nums">{items.length}</span>}
+      </p>
       {items.length === 0 ? (
         <p className="px-2 pt-0.5 pb-1 text-[13px] text-muted-foreground/70">{empty}</p>
       ) : (
         <ul>
-          {items.map((item) => {
+          {shown.map((item) => {
             const ItemIcon = item.icon
             return (
               <li key={item.key}>
@@ -276,6 +299,17 @@ export function RelatedGroup({ label, items, empty }: { label: string; items: Ch
               </li>
             )
           })}
+          {items.length > GROUP_SHOWN && (
+            <li>
+              <button
+                type="button"
+                onClick={() => setAll(!all)}
+                className="w-full cursor-pointer rounded-lg px-2 py-1.5 text-left text-[12.5px] text-muted-foreground transition-colors duration-100 hover:bg-secondary/60 hover:text-foreground"
+              >
+                {all ? 'Show fewer' : `${hidden} more…`}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

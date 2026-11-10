@@ -349,8 +349,6 @@ export function FactorWay({
 
 // ── secrets and notes ───────────────────────────────────────────────────────
 
-const SECRET_GRID = 'grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-4 px-4 py-3'
-
 export function AccountSecretRow({
   secret,
   onEdit,
@@ -372,39 +370,61 @@ export function AccountSecretRow({
     staleTime: Infinity
   })
   const reveal = async (): Promise<string> => value ?? unwrap(await api.revealAccountSecret(secret.id)).value
+  // A note's first line, shown after its name while it is closed.
+  const preview = note && value ? value.split('\n').find((line) => line.trim())?.trim() : undefined
+  const edited = formatRelativeTime(secret.updatedAt).toLowerCase()
 
   return (
-    <li>
-      <div className={SECRET_GRID}>
-        <IconTile icon={note ? Note : Key} />
-        <div className="min-w-0">
-          <p className={cn('truncate text-[14px] text-heading', !note && 'font-mono text-[13.5px]')} data-selectable>
+    <li className="group">
+      {/* One 44 px line, like every long list; a note opens in place (its name is the toggle),
+          a secret's value only with the eye. */}
+      <div className="flex h-11 items-center gap-3 pr-2 pl-4 transition-colors duration-100 hover:bg-secondary/40">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-muted-foreground dark:bg-white/8">
+          {note ? <Note size={13} /> : <Key size={13} />}
+        </span>
+        {note ? (
+          <button
+            type="button"
+            aria-expanded={shown}
+            onClick={() => setShown(!shown)}
+            className="min-w-0 flex-1 cursor-pointer truncate text-left outline-none focus-visible:underline"
+          >
+            <span className="text-[14px] text-heading">{secret.name}</span>
+            {preview && !shown && <span className="ml-2 text-[13px] text-muted-foreground">{preview}</span>}
+          </button>
+        ) : (
+          <p className="min-w-0 flex-1 truncate font-mono text-[13.5px] text-heading" data-selectable>
             {secret.name}
           </p>
-          <p className="truncate text-[12.5px] text-muted-foreground">
-            {note ? 'Note' : 'Secret'}, edited {formatRelativeTime(secret.updatedAt).toLowerCase()}
-          </p>
-        </div>
-        <div className="flex items-center gap-0.5">
+        )}
+        <span className="hidden w-32 shrink-0 truncate text-right text-[12.5px] text-muted-foreground tabular-nums @min-[44rem]:block">
+          {note ? 'Note' : 'Secret'} · {edited}
+        </span>
+        <div
+          className={cn(
+            'flex w-[3.625rem] shrink-0 items-center justify-end gap-0.5 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100',
+            shown ? 'opacity-100' : 'opacity-0'
+          )}
+        >
           {!note && (
             <IconButton label={shown ? 'Hide value' : 'Show value'} size="icon-sm" onClick={() => setShown(!shown)}>
               {shown ? <EyeSlash size={15} /> : <Eye size={15} />}
             </IconButton>
           )}
           <CopyAction label={note ? 'Copy note' : 'Copy value'} value={reveal} secret={!note} />
-          <RowMenu label={`More actions for ${secret.name}`}>
-            <RowMenuItem icon={PencilSimple} onClick={onEdit}>
-              Edit
-            </RowMenuItem>
-            <RowMenuSeparator />
-            <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
-              Delete
-            </RowMenuItem>
-          </RowMenu>
         </div>
+        <RowMenu label={`More actions for ${secret.name}`}>
+          <RowMenuItem icon={PencilSimple} onClick={onEdit}>
+            Edit
+          </RowMenuItem>
+          <RowMenuSeparator />
+          <RowMenuItem icon={Trash} tone="destructive" onClick={onDelete}>
+            Delete
+          </RowMenuItem>
+        </RowMenu>
       </div>
-      {(note || shown) && (
-        <div className="pr-4 pb-3.5 pl-16">
+      {shown && (
+        <div className="pr-4 pb-3.5 pl-[3.25rem]">
           {isError ? (
             <p className="text-[13px] text-muted-foreground">Couldn’t decrypt this.</p>
           ) : value === undefined ? (

@@ -277,13 +277,26 @@ pub struct SecretUpdateInput {
     pub description: Option<String>,
 }
 
-/// A file waiting in the upload dialog, chosen by its token, with its description.
+/// A file waiting in the upload dialog, chosen by its token, with its description
+/// and, if it was renamed there, its new name.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StagedFileInput {
     pub token: i64,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// A file's name as kept in the vault: required, and usable as a file name again when
+/// a decrypted copy is saved (no separators or control characters).
+pub fn validate_file_name(value: &str) -> VaultResult<String> {
+    let name = validate_name(value, "file name", 200)?;
+    if name.chars().any(|c| c == '/' || c == '\\' || c.is_control()) {
+        return Err(VaultError::invalid_input("A file name can’t contain / or \\."));
+    }
+    Ok(name)
 }
 
 pub const MAX_ROLE: usize = 200;

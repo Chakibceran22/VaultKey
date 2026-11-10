@@ -11,7 +11,7 @@ name = "vaultkey_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [workspace]
-# `search`: the graph search engine and its models, free of Tauri and the database so
+# `search`: the graph search engine (models only behind its `meaning` feature), free of Tauri and the database so
 # it builds and is evaluated on its own (docs/graph-search.md).
 members = ["search"]
 

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Fetches the search models into src-tauri/models (gitignored), pinned by revision and
-# SHA-256. Safe to re-run: files already present with the right hash are skipped, and an
+# Search models for experiments, into src-tauri/models (gitignored), pinned by revision and
+# SHA-256. The app ships without a model (docs/graph-search.md); these are only for the
+# search crate's `meaning` feature (`cargo run -p vaultkey-search --features meaning --example eval`).
+# Safe to re-run: files already present with the right hash are skipped, and an
 # interrupted download resumes where it stopped (curl -C -).
 #
-#   bash scripts/fetch-models.sh         # what the app uses: tokenizer + arctic-embed-s (~35 MB)
-#   bash scripts/fetch-models.sh all     # also bge-small and the reranker, for the eval (~57 MB more)
+#   bash scripts/fetch-models.sh         # arctic-embed-s + tokenizer (~35 MB)
+#   bash scripts/fetch-models.sh all     # also bge-small and the reranker, for the eval (~57 MB)
 #
-# All are int8 (dynamic quantization) ONNX exports of BERT-style models and share one
-# tokenizer: bert-base-uncased WordPiece (vocabulary, normalizer and special tokens
-# checked identical across the three repositories).
+# All are int8 (dynamic quantization) ONNX exports and share one tokenizer:
+# bert-base-uncased WordPiece (vocabulary, normalizer and special tokens checked
+# identical across the repositories).
 set -euo pipefail
 
 DEST="$(cd "$(dirname "$0")/.." && pwd)/src-tauri/models"
@@ -36,14 +38,14 @@ fetch() { # url file sha256
   mv "$file.part" "$file"
 }
 
-# Snowflake arctic-embed-s, Apache 2.0.
+# Snowflake arctic-embed-s (Apache-2.0): the best small one measured.
 fetch "$BGE/tokenizer.json" tokenizer.json \
   d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66
 fetch "$ARCTIC/onnx/model_quantized.onnx" snowflake-arctic-embed-s.onnx \
   f93ff225320628d2e88baf2a395cae791b0e3b27edf5c70bf7b312a4d3260c14
 
 if [[ "${1:-}" == "all" ]]; then
-  # BAAI bge-small-en-v1.5 (MIT) and cross-encoder ms-marco-MiniLM-L-6-v2 (Apache 2.0).
+  # BAAI bge-small-en-v1.5 (MIT) and cross-encoder ms-marco-MiniLM-L-6-v2 (Apache-2.0).
   fetch "$BGE/onnx/model_quantized.onnx" bge-small-en-v1.5.onnx \
     6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4
   fetch "$RERANK/onnx/model_quantized.onnx" ms-marco-MiniLM-L-6-v2.onnx \

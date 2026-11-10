@@ -74,13 +74,32 @@ const credentials: MockCredential[] = [
 const projects = [
   { id: 1, name: 'Acme Store', description: 'Shop rebuild on Next.js, self-hosted on Hetzner.', createdAt: iso(40), updatedAt: iso(2) },
   { id: 2, name: 'Portfolio', description: 'Personal site and blog.', createdAt: iso(90), updatedAt: iso(30) },
-  { id: 3, name: 'Side quest', description: '', createdAt: iso(5), updatedAt: iso(5) }
+  { id: 3, name: 'Side quest', description: '', createdAt: iso(5), updatedAt: iso(5) },
+  { id: 4, name: 'Agency clients', description: 'Sites and apps run for clients: a project with many services.', createdAt: iso(60), updatedAt: iso(1) }
 ]
 const services = [
   { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.acme.dev', accounts: [{ accountId: 7, role: 'admin, server owner' }, { accountId: 22, role: 'billing' }], createdAt: iso(40), updatedAt: iso(3) },
   { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/acme', accounts: [{ accountId: 5, role: '' }], createdAt: iso(39), updatedAt: iso(9) },
   { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/acme', accounts: [] as { accountId: number; role: string }[], createdAt: iso(38), updatedAt: iso(12) },
-  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) }
+  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) },
+  // Many services in one project, to see the list at that scale.
+  ...[
+    'Cloudflare', 'Coolify (prod)', 'Coolify (staging)', 'Datadog', 'DigitalOcean', 'Docker Hub', 'Fastly',
+    'Firebase', 'GitHub', 'GitLab CI', 'Grafana', 'Hetzner', 'Linear', 'Mailgun', 'MongoDB Atlas', 'Neon',
+    'Netlify', 'npm', 'OVHcloud', 'PlanetScale', 'Postmark', 'Railway', 'Redis Cloud', 'Render', 'Resend',
+    'Scaleway', 'Sentry', 'Slack', 'Stripe', 'Supabase', 'Twilio', 'Upstash', 'Vercel', 'Zapier'
+  ].map((name, i) => ({
+    id: 200 + i,
+    projectId: 4,
+    name,
+    url: `https://${name.toLowerCase().replace(/[^a-z]+/g, '')}.example.com`,
+    accounts: [
+      { accountId: [1, 5, 6, 7, 22][i % 5], role: i % 3 === 0 ? 'admin' : '' },
+      ...(i % 4 === 0 ? [{ accountId: [8, 10, 9][i % 3], role: 'billing' }] : [])
+    ],
+    createdAt: iso(60 - i),
+    updatedAt: iso(i % 9)
+  }))
 ]
 const secretValues = new Map<number, string>([
   [1, 'sk_live_51Hx0aBcDeFgHiJkLmNoPqRsTuVwXyZ'],
@@ -151,6 +170,30 @@ const deviceLinks = [
   { accountId: 10, deviceId: 4, note: '' }
 ]
 
+// Long lists, to see every list at the scale real vaults reach (preview only).
+{
+  const names = ['STRIPE', 'DATABASE', 'REDIS', 'SENTRY', 'RESEND', 'TWILIO', 'ALGOLIA', 'MAPBOX', 'OPENAI', 'S3']
+  for (let i = 0; i < 45; i++) {
+    const name = `${names[i % names.length]}_${['SECRET_KEY', 'URL', 'TOKEN', 'API_KEY', 'WEBHOOK_SECRET'][i % 5]}${i >= 10 ? `_${Math.floor(i / 10) + 1}` : ''}`
+    secrets.push({ id: 300 + i, projectId: 4, serviceId: i % 3 === 0 ? 200 + (i % 34) : null, kind: 'text', name, mimeType: 'text/plain', size: 32, description: i % 4 === 0 ? ['Live mode, full access', 'read-only', 'staging only', 'rotates every 90 days'][i % 4 === 0 ? (i / 4) % 4 : 0] : '', createdAt: iso(50 - i), updatedAt: iso(i % 20) })
+    secretValues.set(300 + i, `preview-value-${i}`)
+  }
+  for (let i = 0; i < 18; i++) {
+    const name = ['id_ed25519', 'deploy_key', 'client.pem', 'production.env', 'staging.env', 'backup.sql.gz'][i % 6] + (i >= 6 ? `.${Math.floor(i / 6)}` : '')
+    secrets.push({ id: 400 + i, projectId: 4, serviceId: null, kind: 'file', name, mimeType: 'text/plain', size: 400 + i * 37, description: i % 5 === 0 ? 'for the prod server' : '', createdAt: iso(40 - i), updatedAt: iso(i % 15) })
+    secretValues.set(400 + i, 'preview file')
+  }
+  for (let i = 0; i < 24; i++) {
+    const note = i % 3 === 0
+    accountSecrets.push({ id: 500 + i, accountId: 1, kind: note ? 'note' : 'secret', name: note ? `Note ${i}: org settings` : `TOKEN_${i}`, size: 40, createdAt: iso(30 - i), updatedAt: iso(i % 12) })
+    accountSecretValues.set(500 + i, note ? `First line of note ${i}.\nMore details below.` : `ghp_preview_${i}`)
+  }
+  for (let id = 2; id <= 21; id++) {
+    if (id !== 7) links.push({ accountId: id, linkedAccountId: 7, kind: 'sign_in' })
+    if (!deviceLinks.some((l) => l.accountId === id && l.deviceId === 1)) deviceLinks.push({ accountId: id, deviceId: 1, note: '' })
+  }
+}
+
 /** Real RFC 6238 codes, so the preview's live code behaves like the app's. */
 async function totp(secret: string): Promise<{ code: string; period: number; expiresAt: number }> {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
@@ -170,7 +213,7 @@ async function totp(secret: string): Promise<{ code: string; period: number; exp
 function removeWhere<T>(list: T[], test: (item: T) => boolean): void {
   for (let i = list.length - 1; i >= 0; i--) if (test(list[i])) list.splice(i, 1)
 }
-let nextId = 100
+let nextId = 1000
 
 let nextDomainId = 20
 let nextCredentialId = 23
@@ -356,12 +399,12 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     case 'import_staged_files': {
       const imported: number[] = []
-      for (const { token, description } of args.files as { token: number; description: string }[]) {
+      for (const { token, name, description } of args.files as { token: number; name?: string; description: string }[]) {
         const file = staged.find((f) => f.token === token)
         if (!file) fail('INVALID_INPUT', 'A file is no longer in the list. Add it again.')
         const id = nextId++
         secretValues.set(id, 'preview file')
-        secrets.push({ id, projectId: args.projectId as number, serviceId: (args.serviceId as number | null) ?? null, kind: 'file', name: file.name, mimeType: 'text/plain', size: file.size, description, createdAt: iso(0), updatedAt: iso(0) })
+        secrets.push({ id, projectId: args.projectId as number, serviceId: (args.serviceId as number | null) ?? null, kind: 'file', name: name?.trim() || file.name, mimeType: 'text/plain', size: file.size, description, createdAt: iso(0), updatedAt: iso(0) })
         imported.push(id)
       }
       removeWhere(staged, (f) => imported.length > 0 && (args.files as { token: number }[]).some((x) => x.token === f.token))

@@ -7,24 +7,26 @@
 //! Both are BERT-sized (6–12 layers, 384 wide), int8, and share one WordPiece tokenizer.
 //! Nothing here touches the network: the files are read from disk once.
 
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use ort::{
     environment::Environment,
-    session::{Session, builder::GraphOptimizationLevel},
+    session::{
+        Session, SessionInputValue,
+        builder::{AutoDevicePolicy, GraphOptimizationLevel},
+    },
     value::Tensor,
 };
 use tokenizers::{Encoding, Tokenizer, TruncationParams, TruncationStrategy};
 
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
-pub type Result<T> = std::result::Result<T, Error>;
+pub use crate::{Error, Result};
 
 /// How a sequence of token vectors becomes one vector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pooling {
     /// The first token ([CLS]): bge and arctic-embed.
     Cls,
-    /// The mean over real tokens: MiniLM sentence-transformers.
+    /// The mean over real tokens: e5, MiniLM sentence-transformers.
     Mean,
 }
 
@@ -32,34 +34,68 @@ pub enum Pooling {
 #[derive(Clone, Debug)]
 pub struct EmbedderSpec {
     pub name: &'static str,
+    /// The ONNX file and its tokenizer, in the models directory.
     pub file: &'static str,
-    /// Prepended to questions (not to records): asymmetric retrieval models expect it.
+    pub tokenizer: &'static str,
+    /// Prepended to questions: asymmetric retrieval models expect it.
     pub query_prefix: &'static str,
+    /// Prepended to records ("passage: " for e5); usually nothing.
+    pub doc_prefix: &'static str,
     pub pooling: Pooling,
-    /// How close the rest of a question must be to an intent's phrasing to ask for it.
-    /// Similarities are scaled differently per model: tuned on the dev questions.
-    pub intent_min: f32,
+    /// Which output to read; `None` for the first one.
+    pub output: Option<&'static str>,
+    /// How far above the vault's typical similarity a record must stand to be a meaning
+    /// match (standard deviations). Tuned per model on the dev questions.
+    pub z_min: f32,
+    /// How far an intent's phrasing must stand above all phrasings (standard deviations)
+    /// for the rest of a question to ask for it; models separate them more or less.
+    /// Tuned per model on the dev questions.
+    pub intent_z: f32,
 }
+
+/// bert-base-uncased WordPiece, shared by bge, arctic-embed and the MiniLM reranker.
+pub const BERT_TOKENIZER: &str = "tokenizer.json";
 
 pub const BGE_SMALL: EmbedderSpec = EmbedderSpec {
     name: "bge-small-en-v1.5",
     file: "bge-small-en-v1.5.onnx",
+    tokenizer: BERT_TOKENIZER,
     query_prefix: "Represent this sentence for searching relevant passages: ",
+    doc_prefix: "",
     pooling: Pooling::Cls,
-    intent_min: 0.8,
+    output: None,
+    z_min: 2.5,
+    intent_z: 2.5,
 };
 
-/// The default: ahead of bge-small on both splits of the demo questions (see eval.rs).
+/// Ahead of bge-small on the demo questions.
 pub const ARCTIC_S: EmbedderSpec = EmbedderSpec {
     name: "snowflake-arctic-embed-s",
     file: "snowflake-arctic-embed-s.onnx",
+    tokenizer: BERT_TOKENIZER,
     query_prefix: "Represent this sentence for searching relevant passages: ",
+    doc_prefix: "",
     pooling: Pooling::Cls,
-    intent_min: 0.95,
+    output: None,
+    z_min: 2.5,
+    intent_z: 2.0,
 };
 
+/// The embedder the app uses: English and small (34 MB, ~120 MB in memory, ~4 ms per
+/// question). Names are matched by their spelling; meaning is only needed for what is
+/// written about records (descriptions, roles, notes), which is English. Multilingual
+/// models (EmbeddingGemma-2, arctic-embed v2) were measured too: better on brand and
+/// French names, which aren't needed, at 700 MB to 1.7 GB of memory (docs/graph-search.md).
+pub const DEFAULT_EMBEDDER: EmbedderSpec = ARCTIC_S;
+
+/// Every embedder the eval knows, by name.
+pub const EMBEDDERS: &[EmbedderSpec] = &[ARCTIC_S, BGE_SMALL];
+
+pub fn embedder_spec(name: &str) -> Option<EmbedderSpec> {
+    EMBEDDERS.iter().find(|spec| spec.name == name).cloned()
+}
+
 pub const RERANKER_FILE: &str = "ms-marco-MiniLM-L-6-v2.onnx";
-pub const TOKENIZER_FILE: &str = "tokenizer.json";
 
 /// Creates the ONNX Runtime environment every session hangs off. One per process.
 pub fn environment() -> Result<Environment> {
@@ -69,21 +105,37 @@ pub fn environment() -> Result<Environment> {
 /// The builder's errors carry the builder (not `Send`); `?` here turns them into plain ones.
 fn session(env: &Environment, model: &Path, threads: usize) -> ort::Result<Session> {
     Session::builder(env)?
+        // CPU only. This ort's default picks "max efficiency", which on macOS hands parts of
+        // the graph to CoreML: ~3x slower for these small models (5 ms instead of 15), and
+        // it rejects some graphs. Same results on every platform this way.
+        .with_auto_device(AutoDevicePolicy::PreferCPU)?
         .with_optimization_level(GraphOptimizationLevel::Level3)?
         .with_intra_threads(threads)?
         .with_inter_threads(1)?
         .commit_from_file(model)
 }
 
-/// A BERT-style encoder: tokens in, the model's first output out.
+/// A transformer encoder: tokens in, one output out. Only the inputs the model
+/// declares are fed (some want `token_type_ids`, some `position_ids`).
 struct Encoder {
     session: Session,
     tokenizer: Tokenizer,
     token_types: bool,
+    positions: bool,
+    /// The tokenizer's padding id (0 for BERT, 1 for XLM-R, …).
+    pad: i64,
+    output: Option<&'static str>,
 }
 
 impl Encoder {
-    fn load(env: &Environment, model: &Path, tokenizer: &Path, max_tokens: usize, threads: usize) -> Result<Self> {
+    fn load(
+        env: &Environment,
+        model: &Path,
+        tokenizer: &Path,
+        max_tokens: usize,
+        threads: usize,
+        output: Option<&'static str>,
+    ) -> Result<Self> {
         let mut tokenizer = Tokenizer::from_file(tokenizer)?;
         tokenizer
             .with_truncation(Some(TruncationParams {
@@ -93,15 +145,25 @@ impl Encoder {
             }))?
             .with_padding(None);
         let session = session(env, model, threads)?;
-        let token_types = session.inputs().iter().any(|input| input.name() == "token_type_ids");
-        Ok(Self { session, tokenizer, token_types })
+        let declares = |name: &str| session.inputs().iter().any(|input| input.name() == name);
+        let (token_types, positions) = (declares("token_type_ids"), declares("position_ids"));
+        let pad = ["<pad>", "[PAD]"]
+            .iter()
+            .find_map(|token| tokenizer.token_to_id(token))
+            .map_or(0, i64::from);
+        if let Some(name) = output {
+            if !session.outputs().iter().any(|o| o.name() == name) {
+                return Err(format!("{} has no output named {name}", model.display()).into());
+            }
+        }
+        Ok(Self { session, tokenizer, token_types, positions, pad, output })
     }
 
     /// Runs one padded batch; returns the first output and its shape.
     fn run(&mut self, batch: &[Encoding]) -> Result<(Vec<usize>, Vec<f32>)> {
         let rows = batch.len();
         let width = batch.iter().map(|e| e.get_ids().len()).max().unwrap_or(0);
-        let mut ids = vec![0i64; rows * width];
+        let mut ids = vec![self.pad; rows * width];
         let mut mask = vec![0i64; rows * width];
         let mut types = vec![0i64; rows * width];
         for (row, encoding) in batch.iter().enumerate() {
@@ -118,19 +180,23 @@ impl Encoder {
             }
         }
         let shape = [rows, width];
-        let outputs = if self.token_types {
-            self.session.run(ort::inputs![
-                "input_ids" => Tensor::from_array((shape, ids))?,
-                "attention_mask" => Tensor::from_array((shape, mask))?,
-                "token_type_ids" => Tensor::from_array((shape, types))?,
-            ])?
-        } else {
-            self.session.run(ort::inputs![
-                "input_ids" => Tensor::from_array((shape, ids))?,
-                "attention_mask" => Tensor::from_array((shape, mask))?,
-            ])?
+        let positions: Vec<i64> = (0..rows).flat_map(|_| 0..width as i64).collect();
+        let mut inputs: Vec<(Cow<'static, str>, SessionInputValue<'_>)> = vec![
+            ("input_ids".into(), Tensor::from_array((shape, ids))?.into()),
+            ("attention_mask".into(), Tensor::from_array((shape, mask))?.into()),
+        ];
+        if self.token_types {
+            inputs.push(("token_type_ids".into(), Tensor::from_array((shape, types))?.into()));
+        }
+        if self.positions {
+            inputs.push(("position_ids".into(), Tensor::from_array((shape, positions))?.into()));
+        }
+        let outputs = self.session.run(inputs)?;
+        let value = match self.output {
+            Some(name) => &outputs[name],
+            None => &outputs[0],
         };
-        let (out_shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+        let (out_shape, data) = value.try_extract_tensor::<f32>()?;
         Ok((out_shape.iter().map(|&d| d as usize).collect(), data.to_vec()))
     }
 }
@@ -144,7 +210,7 @@ pub struct Embedder {
 impl Embedder {
     pub fn load(env: &Environment, dir: &Path, spec: EmbedderSpec, threads: usize) -> Result<Self> {
         // Records and questions are a line or two; 128 tokens is far more than either.
-        let mut encoder = Encoder::load(env, &dir.join(spec.file), &dir.join(TOKENIZER_FILE), 128, threads)?;
+        let mut encoder = Encoder::load(env, &dir.join(spec.file), &dir.join(spec.tokenizer), 128, threads, spec.output)?;
         let probe = encoder.tokenizer.encode("probe", true)?;
         let (shape, _) = encoder.run(&[probe])?;
         let dim = *shape.last().ok_or("embedder returned no dimensions")?;
@@ -163,8 +229,12 @@ impl Embedder {
         self.spec.name
     }
 
-    pub fn intent_min(&self) -> f32 {
-        self.spec.intent_min
+    pub fn z_min(&self) -> f32 {
+        self.spec.z_min
+    }
+
+    pub fn intent_z(&self) -> f32 {
+        self.spec.intent_z
     }
 
     /// Questions, with the model's query instruction. Row-major, one unit vector each.
@@ -173,9 +243,13 @@ impl Embedder {
         self.embed_texts(&prefixed)
     }
 
-    /// Records, as they are. Row-major, one unit vector each.
+    /// Records, with the model's document prefix (if any). Row-major, one unit vector each.
     pub fn embed_documents(&mut self, texts: &[String]) -> Result<Vec<f32>> {
-        self.embed_texts(texts)
+        if self.spec.doc_prefix.is_empty() {
+            return self.embed_texts(texts);
+        }
+        let prefixed: Vec<String> = texts.iter().map(|t| format!("{}{t}", self.spec.doc_prefix)).collect();
+        self.embed_texts(&prefixed)
     }
 
     /// Texts exactly as given (callers add the query prefix where they want it).
@@ -192,7 +266,8 @@ impl Embedder {
         for chunk in order.chunks(BATCH) {
             let batch: Vec<Encoding> = chunk.iter().map(|&i| encodings[i].clone()).collect();
             let (shape, data) = self.encoder.run(&batch)?;
-            let (width, dim) = (shape[1], shape[2]);
+            // [batch, tokens, dim], or [batch, dim] when the model pools itself.
+            let (width, dim) = if shape.len() == 3 { (shape[1], shape[2]) } else { (1, shape[1]) };
             for (row, &index) in chunk.iter().enumerate() {
                 let target = &mut out[index * dim..(index + 1) * dim];
                 let tokens = &data[row * width * dim..(row + 1) * width * dim];
@@ -224,7 +299,7 @@ pub struct Reranker {
 
 impl Reranker {
     pub fn load(env: &Environment, dir: &Path, threads: usize) -> Result<Self> {
-        Ok(Self { encoder: Encoder::load(env, &dir.join(RERANKER_FILE), &dir.join(TOKENIZER_FILE), 192, threads)? })
+        Ok(Self { encoder: Encoder::load(env, &dir.join(RERANKER_FILE), &dir.join(BERT_TOKENIZER), 192, threads, None)? })
     }
 
     /// How well each candidate answers the question: raw logits, higher is better.

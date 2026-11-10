@@ -8,6 +8,7 @@ import { AccountSecretModal } from '@renderer/components/accounts/AccountSecretM
 import { FactorModal } from '@renderer/components/accounts/FactorModal'
 import { DEVICES, FACTOR_KINDS, FACTORS } from '@renderer/components/accounts/kinds'
 import { RelatedGroup } from '@renderer/components/accounts/parts'
+import { ListFilter, listFooter, MoreLine, NoMatchLine, useLongList, useSlashToFilter } from '@renderer/components/layout/long-list'
 import {
   AccountSecretRow,
   EmailWay,
@@ -76,6 +77,8 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
 
   const account = accounts.find((a) => a.id === accountId)
   const relations = relationsOf(accountId)
+  const secretList = useLongList(relations.secrets, (s) => `${s.name} ${s.kind === 'note' ? 'note' : 'secret'}`)
+  useSlashToFilter()
   useShowSection(!!account)
 
   if (!account) {
@@ -305,14 +308,17 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
               id="section-secrets"
               title="Secrets and notes"
               action={
-                <Button size="md" onClick={addSecret}>
-                  <Plus size={13} weight="bold" />
-                  Add secret or note
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ListFilter list={secretList} label="Filter secrets and notes" />
+                  <Button size="md" onClick={addSecret}>
+                    <Plus size={13} weight="bold" />
+                    Add secret or note
+                  </Button>
+                </div>
               }
             >
-              <ListFrame footer={relations.secrets.length > 0 ? plural(relations.secrets.length, 'item') : undefined}>
-                {relations.secrets.map((secret) => (
+              <ListFrame footer={listFooter(secretList, 'item')}>
+                {secretList.visible.map((secret) => (
                   <AccountSecretRow
                     key={secret.id}
                     secret={secret}
@@ -320,6 +326,8 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
                     onDelete={() => void removeSecret(secret)}
                   />
                 ))}
+                <MoreLine list={secretList} noun="item" />
+                <NoMatchLine list={secretList} searches="names" />
                 {relations.secrets.length === 0 && (
                   <EmptyLine title="None yet.">
                     Tokens and keys that belong to this account, or anything about it you would otherwise have to

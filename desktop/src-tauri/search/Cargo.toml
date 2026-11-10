@@ -5,14 +5,38 @@ description = "VaultKey graph search: words, meaning (embeddings), links and a r
 edition = "2024"
 publish = false
 
+[features]
+# Search by meaning: an embedding model through ONNX Runtime. Off: the app searches by
+# words and links only (no model, ~11 MB, under a millisecond); measured as good for
+# finding secrets by their descriptions (docs/graph-search.md). On for the eval and for
+# model experiments.
+meaning = ["dep:ort", "dep:tokenizers"]
+
 [dependencies]
 # ONNX Runtime on the CPU, statically linked (no dylib to ship, nothing fetched at run time).
-ort = "=2.0.0-rc.15"
+ort = { version = "=2.0.0-rc.15", optional = true }
 # Only the WordPiece path is used; no progress bars, no training code.
-tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
 # Accent folding ("Électricité" → electricite); already a dependency of tokenizers.
 unicode-normalization-alignments = "0.1"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1"
+
+# The models' tools: `cargo run -p vaultkey-search --features meaning --example eval`.
+[[example]]
+name = "eval"
+required-features = ["meaning"]
+
+[[example]]
+name = "smoke"
+required-features = ["meaning"]
+
+[[example]]
+name = "inspect"
+required-features = ["meaning"]
+
+[[example]]
+name = "memory"
+required-features = ["meaning"]

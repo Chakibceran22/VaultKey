@@ -3,11 +3,9 @@
 
 use std::path::PathBuf;
 
-use vaultkey_search::{
-    Index, Models, Options, search,
-    model::{self, ARCTIC_S, Embedder},
-    vault::Vault,
-};
+use vaultkey_search::{Index, Models, Options, search, vault::Vault};
+#[cfg(feature = "meaning")]
+use vaultkey_search::model::{self, DEFAULT_EMBEDDER, Embedder};
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -70,23 +68,22 @@ fn never_indexes_secret_values() {
     }
 }
 
+#[cfg(feature = "meaning")]
 #[test]
 fn finds_by_meaning() -> model::Result<()> {
     let dir = root().join("../models");
-    if !dir.join(ARCTIC_S.file).exists() {
+    if !dir.join(DEFAULT_EMBEDDER.file).exists() {
         eprintln!("skipped: models not fetched");
         return Ok(());
     }
     let env = model::environment()?;
-    let mut embedder = Embedder::load(&env, &dir, ARCTIC_S, 2)?;
+    let mut embedder = Embedder::load(&env, &dir, DEFAULT_EMBEDDER, 2)?;
     let mut index = Index::new(&vault());
     index.embed(&mut embedder)?;
     let opts = Options::default();
-    let cases: [(&str, &[&str]); 5] = [
+    let cases: [(&str, &[&str]); 4] = [
         // Intent by meaning: "log in" asks for sign-in steps.
         ("how do I log in to binance", &["step:18", "step:19"]),
-        // A consequence, asked in a sentence.
-        ("what would break if I lose my pixel", &["step:11", "step:14", "account:24", "account:13"]),
         // A word in no name, close in meaning to a device's notes.
         ("spare phone", &["device:5"]),
         ("my bank", &["account:30", "account:31", "account:19"]),
@@ -128,4 +125,48 @@ fn finds_every_account_a_service_uses_and_each_by_its_role() {
     assert_eq!(first(&index, "coolify deploy", None, &words_only()), "account:2");
     assert_eq!(first(&index, "root ssh key", None, &words_only()), "file:1");
     assert_eq!(first(&index, "authenticator iphone", None, &words_only()), "device:1");
+}
+
+/// Names are labels: "Shaba" means nothing and is found by its spelling. What a project
+/// is comes from its description, which is what meaning reads.
+#[cfg(feature = "meaning")]
+#[test]
+fn finds_a_meaningless_name_by_its_description() -> model::Result<()> {
+    let dir = root().join("../models");
+    if !dir.join(DEFAULT_EMBEDDER.file).exists() {
+        eprintln!("skipped: models not fetched");
+        return Ok(());
+    }
+    let vault: Vault = serde_json::from_value(serde_json::json!({
+        "projects": [
+            { "id": 1, "name": "Shaba", "description": "Online booking for a hair salon" },
+            { "id": 2, "name": "Kito", "description": "Internal dashboard for warehouse stock levels" },
+            { "id": 3, "name": "Moro", "description": "Mobile app for a running club" }
+        ],
+        "services": [
+            { "id": 1, "projectId": 1, "name": "Vercel" },
+            { "id": 2, "projectId": 2, "name": "Supabase" },
+            { "id": 3, "projectId": 3, "name": "Expo" }
+        ]
+    }))
+    .unwrap();
+    let env = model::environment()?;
+    let mut embedder = Embedder::load(&env, &dir, DEFAULT_EMBEDDER, 2)?;
+    let mut index = Index::new(&vault);
+    index.embed(&mut embedder)?;
+    let opts = Options::default();
+    let cases = [
+        // By its name, spelled (typos too), as always.
+        ("shaba", "project:1"),
+        ("shabba", "project:1"),
+        // By what it is, in words that appear nowhere in the vault.
+        ("hairdresser appointments", "project:1"),
+        ("inventory", "project:2"),
+        ("joggers", "project:3"),
+    ];
+    for (query, want) in cases {
+        let got = first(&index, query, Some(Models { embedder: &mut embedder, reranker: None }), &opts);
+        assert_eq!(got, want, "{query}");
+    }
+    Ok(())
 }

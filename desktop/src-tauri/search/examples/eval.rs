@@ -2,12 +2,15 @@
 //!
 //!   cargo run -p vaultkey-search --example eval -- [options]
 //!
-//!   --embedder arctic|bge   which embedding model (default arctic)
+//!   --embedder NAME         the app's (default), arctic, bge, or any name in model::EMBEDDERS
 //!   --split dev|held|all    which questions to show failures for (default dev)
 //!   --threads N             ONNX Runtime threads per model (default 2)
 //!   --set name=value        override a Params field (repeatable)
 //!   --only words|meaning|full   run one configuration instead of all three
 //!   --probe "a|b"           what meaning sees in each phrase (closest records, intents)
+//!   --vault FILE            another vault (default fixtures/demo-vault.json)
+//!   --questions FILE        another question set (default fixtures/demo-questions.json)
+//!   --every                 list every question with its marks, not only the misses
 //!   --dump                  print words-only results as JSON lines (for the TS parity check)
 //!
 //! Metrics: hit@1 (a right record comes first), MRR@5, and per-question latency.
@@ -48,13 +51,13 @@ fn set(params: &mut Params, assignment: &str) {
     let (name, value) = assignment.split_once('=').expect("--set name=value");
     let f: f64 = value.parse().expect("a number");
     match name {
-        "z_min" => params.z_min = f as f32,
+        "z_min" => params.z_min = Some(f as f32),
         "keep_within" => params.keep_within = f as f32,
         "max_meaning" => params.max_meaning = f as usize,
         "meaning_quality" => params.meaning_quality = f,
         "strong_word" => params.strong_word = f,
         "rrf_k" => params.rrf_k = f,
-        "intent_min" => params.intent_min = Some(f as f32),
+        "intent_z" => params.intent_z = Some(f as f32),
         "rerank_top" => params.rerank_top = f as usize,
         "rerank_weight" => params.rerank_weight = f,
         "query_weight" => params.query_weight = f,
@@ -68,7 +71,12 @@ fn main() -> model::Result<()> {
     let flag = |name: &str| args.iter().any(|a| a == name);
     let split = arg("--split").unwrap_or_else(|| "dev".into());
     let threads: usize = arg("--threads").map_or(2, |t| t.parse().unwrap());
-    let spec = if arg("--embedder").as_deref() == Some("bge") { BGE_SMALL } else { ARCTIC_S };
+    let spec = match arg("--embedder").as_deref() {
+        None => model::DEFAULT_EMBEDDER,
+        Some("arctic") => ARCTIC_S,
+        Some("bge") => BGE_SMALL,
+        Some(name) => model::embedder_spec(name).unwrap_or_else(|| panic!("unknown embedder {name}")),
+    };
     let mut params = Params::default();
     for (i, a) in args.iter().enumerate() {
         if a == "--set" {
@@ -77,8 +85,10 @@ fn main() -> model::Result<()> {
     }
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let vault: Vault = serde_json::from_str(&std::fs::read_to_string(root.join("fixtures/demo-vault.json"))?)?;
-    let gold: Gold = serde_json::from_str(&std::fs::read_to_string(root.join("fixtures/demo-questions.json"))?)?;
+    let vault_file = arg("--vault").map_or_else(|| root.join("fixtures/demo-vault.json"), PathBuf::from);
+    let vault: Vault = serde_json::from_str(&std::fs::read_to_string(&vault_file)?)?;
+    let questions = arg("--questions").map_or_else(|| root.join("fixtures/demo-questions.json"), PathBuf::from);
+    let gold: Gold = serde_json::from_str(&std::fs::read_to_string(&questions)?)?;
     let mut index = Index::new(&vault);
 
     if flag("--dump") {
@@ -180,7 +190,7 @@ fn main() -> model::Result<()> {
         "held" => i % 2 == 1,
         _ => true,
     };
-    println!("{:<10} {:>13} {:>13} {:>9} {:>9} {:>9} {:>9}", "config", "hit@1 dev", "hit@1 held", "MRR dev", "MRR held", "p50", "p95");
+    println!("{:<10} {:>13} {:>13} {:>13} {:>9} {:>9} {:>9} {:>9}", "config", "hit@1 dev", "hit@1 held", "hit@1 all", "MRR dev", "MRR held", "p50", "p95");
     for (name, outcomes) in &summary {
         let hit = |s: &str| {
             let (n, ok) = outcomes.iter().enumerate().filter(|(i, _)| in_split(*i, s)).fold((0, 0), |(n, ok), (_, o)| (n + 1, ok + usize::from(o.rank == Some(0))));
@@ -193,7 +203,7 @@ fn main() -> model::Result<()> {
         let mut times: Vec<Duration> = outcomes.iter().map(|o| o.took).collect();
         times.sort();
         let pct = |p: f64| times[((times.len() as f64 * p) as usize).min(times.len() - 1)];
-        println!("{name:<10} {:>13} {:>13} {:>9.3} {:>9.3} {:>9.1?} {:>9.1?}", hit("dev"), hit("held"), mrr("dev"), mrr("held"), pct(0.5), pct(0.95));
+        println!("{name:<10} {:>13} {:>13} {:>13} {:>9.3} {:>9.3} {:>9.1?} {:>9.1?}", hit("dev"), hit("held"), hit("all"), mrr("dev"), mrr("held"), pct(0.5), pct(0.95));
     }
 
     // Per kind of question, for the last configuration.
@@ -226,7 +236,7 @@ fn main() -> model::Result<()> {
             })
             .collect();
         let last = &summary.last().unwrap().1[i];
-        if last.rank != Some(0) {
+        if last.rank != Some(0) || flag("--every") {
             println!("  {:<46} {}  top: {}", format!("{:?}", q.q), marks.join(" "), last.top.join(", "));
         }
     }

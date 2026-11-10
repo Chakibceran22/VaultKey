@@ -59,24 +59,29 @@ export interface GraphInput {
 /** Parts of names that say nothing on their own. */
 const NOISE = new Set(['www', 'com', 'net', 'org', 'fr', 'io', 'co', 'me', 'so', 'gg', 'tv', 'uk', 'eu', 'us', 'http', 'https'])
 
+/** Accents dropped, lowercased, split on anything that is not a-z or 0-9. */
+const split = (value: string): string[] =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word && !NOISE.has(word))
+
 /**
- * "BattleNet.com" → battle, net, battlenet; "STRIPE_SECRET_KEY" → stripe, secret, key;
- * accents dropped ("Électricité" → electricite).
+ * "BattleNet.com" → battle, battlenet ("net" is noise); "STRIPE_SECRET_KEY" → stripe,
+ * secret, key; accents dropped ("Électricité" → electricite).
  */
 export function words(text: string): string[] {
   const spaced = text.replace(/([a-z])([A-Z])/g, '$1 $2')
-  const split = (value: string): string[] =>
-    value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((word) => word && !NOISE.has(word))
   const parts = split(spaced)
   // Keep camel-cased names whole as well: "battlenet" finds BattleNet.
   const whole = split(text).filter((word) => !parts.includes(word))
   return [...parts, ...whole]
 }
+
+/** A name with accents, case, spaces and punctuation gone: "Lumen-Post" → lumenpost. */
+export const squash = (text: string): string => split(text).join('')
 
 const terms = (text: string, weight: number): Term[] => words(text).map((word) => ({ text: word, weight }))
 

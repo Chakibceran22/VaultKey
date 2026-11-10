@@ -18,12 +18,13 @@ import {
 import { SecretRow, ServiceRow, type ServiceAccountView } from '@renderer/components/projects/rows'
 import { SecretForm, ServiceForm } from '@renderer/components/projects/forms'
 import { UploadFiles } from '@renderer/components/projects/UploadFiles'
+import { ListFilter, listFooter, MoreLine, NoMatchLine, useLongList, useSlashToFilter } from '@renderer/components/layout/long-list'
 import { Button } from '@renderer/components/ui/button'
 import { useConfirm } from '@renderer/components/ui/confirm'
 import { InlineEdit } from '@renderer/components/ui/controls'
 import { Spinner } from '@renderer/components/ui/misc'
 import { Modal, RowMenu, RowMenuItem } from '@renderer/components/ui/overlays'
-import { plural, refreshVault, useAccounts, useRelations, useWorkspace } from '@renderer/hooks/use-vault'
+import { hostOf, plural, refreshVault, useAccounts, useRelations, useWorkspace } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { isModKey, isOverlayOpen, MOD } from '@renderer/lib/dom'
 import { useDropTarget } from '@renderer/lib/drop-target'
@@ -53,12 +54,30 @@ export default function ProjectPage(): React.ReactElement {
   const dropped = useDropTarget((s) => s.dropped)
   const setDropped = useDropTarget((s) => s.setDropped)
   const [modal, setModal] = useState<ModalState>({ open: false, kind: 'service', service: null })
+  const [openService, setOpenService] = useState<number | null>(null)
 
   const project = projects.find((p) => p.id === projectId)
   const projectServices = services.filter((s) => s.projectId === projectId)
   const textSecrets = secrets.filter((s) => s.projectId === projectId && s.kind === 'text')
   const files = secrets.filter((s) => s.projectId === projectId && s.kind === 'file')
   const serviceName = (id: number | null): string | undefined => projectServices.find((s) => s.id === id)?.name
+
+  // Each list stays short however long it gets: the first few, a filter, "Show all".
+  const serviceList = useLongList(projectServices, (service) =>
+    [
+      service.name,
+      hostOf(service.url),
+      ...service.accounts.flatMap(({ accountId, role }) => {
+        const account = accounts.find((a) => a.id === accountId)
+        return account ? [account.domainName, account.email, account.username ?? '', role] : [role]
+      })
+    ].join(' ')
+  )
+  const kept = (secret: SecretMeta): string =>
+    [secret.name, secret.description, serviceName(secret.serviceId) ?? 'whole project'].join(' ')
+  const secretList = useLongList(textSecrets, kept)
+  const fileList = useLongList(files, kept)
+  useSlashToFilter()
 
   // Files dropped onto the window go into this project while it is open.
   useEffect(() => {
@@ -246,22 +265,30 @@ export default function ProjectPage(): React.ReactElement {
               id="section-services"
               title="Services"
               action={
-                <Button size="md" onClick={addService} title={`Add service (${MOD}N)`}>
-                  <Plus size={13} weight="bold" />
-                  Add service
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ListFilter list={serviceList} label="Filter services" />
+                  <Button size="md" onClick={addService} title={`Add service (${MOD}N)`}>
+                    <Plus size={13} weight="bold" />
+                    Add service
+                  </Button>
+                </div>
               }
             >
-              <ListFrame footer={projectServices.length > 0 ? plural(projectServices.length, 'service') : undefined}>
-                {projectServices.map((service) => (
+              <ListFrame footer={listFooter(serviceList, 'service')}>
+                {serviceList.visible.map((service) => (
                   <ServiceRow
                     key={service.id}
                     service={service}
                     accounts={accountViews(service)}
+                    kept={secrets.filter((s) => s.serviceId === service.id)}
+                    expanded={openService === service.id}
+                    onToggle={() => setOpenService((open) => (open === service.id ? null : service.id))}
                     onEdit={() => setModal({ open: true, kind: 'service', service })}
                     onDelete={() => void removeService(service)}
                   />
                 ))}
+                <MoreLine list={serviceList} noun="service" />
+                <NoMatchLine list={serviceList} searches="names, addresses, accounts and their roles" />
                 {projectServices.length === 0 && (
                   <EmptyLine title="No services yet.">
                     Add what this project runs on (hosting, database, email…) and the account each one uses.
@@ -274,14 +301,17 @@ export default function ProjectPage(): React.ReactElement {
               id="section-secrets"
               title="Secrets"
               action={
-                <Button size="md" onClick={addSecret}>
-                  <Plus size={13} weight="bold" />
-                  Add secret
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ListFilter list={secretList} label="Filter secrets" />
+                  <Button size="md" onClick={addSecret}>
+                    <Plus size={13} weight="bold" />
+                    Add secret
+                  </Button>
+                </div>
               }
             >
-              <ListFrame footer={textSecrets.length > 0 ? plural(textSecrets.length, 'secret') : undefined}>
-                {textSecrets.map((secret) => (
+              <ListFrame footer={listFooter(secretList, 'secret')}>
+                {secretList.visible.map((secret) => (
                   <SecretRow
                     key={secret.id}
                     secret={secret}
@@ -290,6 +320,8 @@ export default function ProjectPage(): React.ReactElement {
                     onDelete={() => void removeSecret(secret)}
                   />
                 ))}
+                <MoreLine list={secretList} noun="secret" />
+                <NoMatchLine list={secretList} searches="names, descriptions and services" />
                 {textSecrets.length === 0 && (
                   <EmptyLine title="No secrets yet.">
                     API keys, tokens and environment variables, encrypted with your vault key.
@@ -302,18 +334,17 @@ export default function ProjectPage(): React.ReactElement {
               id="section-files"
               title="Files"
               action={
-                <Button size="md" onClick={addFiles}>
-                  <FilePlus size={14} />
-                  Add files
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ListFilter list={fileList} label="Filter files" />
+                  <Button size="md" onClick={addFiles}>
+                    <FilePlus size={14} />
+                    Add files
+                  </Button>
+                </div>
               }
             >
-              <ListFrame
-                footer={
-                  files.length > 0 ? <>{plural(files.length, 'file')}. Drop more onto the window to add them.</> : undefined
-                }
-              >
-                {files.map((secret) => (
+              <ListFrame footer={listFooter(fileList, 'file')}>
+                {fileList.visible.map((secret) => (
                   <SecretRow
                     key={secret.id}
                     secret={secret}
@@ -322,6 +353,8 @@ export default function ProjectPage(): React.ReactElement {
                     onDelete={() => void removeSecret(secret)}
                   />
                 ))}
+                <MoreLine list={fileList} noun="file" />
+                <NoMatchLine list={fileList} searches="names, descriptions and services" />
                 {files.length === 0 && (
                   <EmptyLine title="No files yet.">
                     SSH keys, certificates, .env files or anything else, encrypted with your vault key. Drop files onto

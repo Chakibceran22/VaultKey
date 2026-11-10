@@ -21,8 +21,8 @@ function reportSkipped(list: StagedList): void {
 
 /**
  * The upload dialog: files gathered by drag and drop (onto the window, anywhere) or
- * the native picker, each with an optional description, then added together.
- * The paths stay in Rust; this page only ever sees a token, a name and a size.
+ * the native picker, each renamable and with an optional description, then added
+ * together. The paths stay in Rust; this page only ever sees a token, a name and a size.
  */
 export function UploadFiles({
   projectId,
@@ -39,6 +39,8 @@ export function UploadFiles({
   const queryClient = useQueryClient()
   const [files, setFiles] = useState<StagedFile[]>(incoming?.files ?? [])
   const [descriptions, setDescriptions] = useState<Record<number, string>>({})
+  const [names, setNames] = useState<Record<number, string>>({})
+  const nameOf = (file: StagedFile): string => names[file.token] ?? file.name
   const [serviceId, setServiceId] = useState<number | null>(null)
   const [picking, setPicking] = useState(false)
 
@@ -74,11 +76,12 @@ export function UploadFiles({
       onCancel={onDone}
       save={async () => {
         if (!files.length) throw new Error('Drop files here or choose them first.')
+        if (files.some((f) => !nameOf(f).trim())) throw new Error('Give each file a name.')
         const report = unwrap(
           await api.importStagedFiles(
             projectId,
             serviceId,
-            files.map((f) => ({ token: f.token, description: (descriptions[f.token] ?? '').trim() }))
+            files.map((f) => ({ token: f.token, name: nameOf(f).trim(), description: (descriptions[f.token] ?? '').trim() }))
           )
         )
         await refreshVault(queryClient)
@@ -102,10 +105,22 @@ export function UploadFiles({
             <li key={file.token} className="frost space-y-2 rounded-lg py-2 pr-1.5 pl-2.5">
               <div className="flex items-center gap-2.5">
                 <File size={16} className="shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-[13.5px]">
-                  <span className="font-medium text-heading">{file.name}</span>
-                  <span className="ml-2 text-muted-foreground">{size(file.size)}</span>
-                </span>
+                <Input
+                  aria-label={`Name of ${file.name}`}
+                  placeholder="File name"
+                  value={nameOf(file)}
+                  maxLength={200}
+                  spellCheck={false}
+                  autoComplete="off"
+                  // Like Finder: the name is selected without its extension.
+                  onFocus={(e) => {
+                    const dot = e.target.value.lastIndexOf('.')
+                    e.target.setSelectionRange(0, dot > 0 ? dot : e.target.value.length)
+                  }}
+                  onChange={(e) => setNames((n) => ({ ...n, [file.token]: e.target.value }))}
+                  className="h-8 min-w-0 flex-1 font-mono text-[13px] text-heading"
+                />
+                <span className="shrink-0 text-[12.5px] text-muted-foreground tabular-nums">{size(file.size)}</span>
                 <IconButton label={`Remove ${file.name}`} size="icon-sm" onClick={() => void remove(file.token)}>
                   <X size={13} />
                 </IconButton>

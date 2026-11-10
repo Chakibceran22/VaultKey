@@ -14,10 +14,16 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "meaning")]
+use crate::{
+    intents::is_stopword,
+    model::{Embedder, Reranker, dot},
+};
+
 use crate::{
     graph::{self, Graph},
-    intents::{BY_WORD, INTENTS, Intent, is_filler, is_stopword},
-    model::{self, Embedder, Reranker, dot},
+    intents::{BY_WORD, INTENTS, Intent, is_filler},
+
     text::{quality, squash, words},
     types::{AnchorWords, NodeKind, PathStep, SearchHit, SearchNode, SearchResponse, Understood, Want},
     vault::Vault,
@@ -30,9 +36,10 @@ const MIN_QUALITY: f64 = 0.45;
 /// The knobs the gold set tunes.
 #[derive(Clone, Debug)]
 pub struct Params {
-    /// A record is a meaning match only this many standard deviations above the vault's
-    /// typical similarity to the phrase: "usthb" means nothing, and then nothing matches.
-    pub z_min: f32,
+    /// Overrides the embedder's own meaning cut-off (for tuning): a record is a meaning
+    /// match only this many standard deviations above the vault's typical similarity to
+    /// the phrase ("usthb" means nothing, and then nothing matches).
+    pub z_min: Option<f32>,
     /// ...and within this much similarity of the best match.
     pub keep_within: f32,
     pub max_meaning: usize,
@@ -43,7 +50,11 @@ pub struct Params {
     /// Reciprocal rank fusion constant.
     pub rrf_k: f64,
     /// Overrides the embedder's own intent threshold (for tuning).
-    pub intent_min: Option<f32>,
+    /// Overrides the embedder's own intent threshold (for tuning). The rest of a question
+    /// asks for an intent only when its closest phrasing stands this many standard
+    /// deviations above all phrasings (relative: it holds for models whose similarities
+    /// are all near 0.9 and for those near 0.3), and stands out more than any record does.
+    pub intent_z: Option<f32>,
     /// How many of the best candidates the reranker reads.
     pub rerank_top: usize,
     /// Final score = this × reranker + the rest × walk.
@@ -55,13 +66,13 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
-            z_min: 2.5,
+            z_min: None,
             keep_within: 0.08,
             max_meaning: 5,
             meaning_quality: 0.8,
             strong_word: 0.8,
             rrf_k: 3.0,
-            intent_min: None,
+            intent_z: None,
             rerank_top: 15,
             rerank_weight: 0.6,
             // No measurable gain on the dev questions; costs a second embedding.
@@ -93,20 +104,29 @@ pub struct Timing {
     pub total: Duration,
 }
 
+/// The models a search by meaning uses. Built with the `meaning` feature only; without it
+/// this can't be made, and every search passes `None` (words and links).
+#[cfg(feature = "meaning")]
 pub struct Models<'a> {
     pub embedder: &'a mut Embedder,
     pub reranker: Option<&'a mut Reranker>,
 }
 
+#[cfg(not(feature = "meaning"))]
+pub struct Models<'a>(std::convert::Infallible, std::marker::PhantomData<&'a ()>);
+
 /// The graph, and (once embedded) a unit vector per record and per intent phrasing.
 pub struct Index {
     pub graph: Graph,
+    #[cfg(feature = "meaning")]
     meaning: Option<Meaning>,
 }
 
+#[cfg(feature = "meaning")]
 struct Meaning {
     dim: usize,
-    intent_min: f32,
+    z_min: f32,
+    intent_z: f32,
     nodes: Vec<f32>,
     examples: Vec<f32>,
     example_intent: Vec<usize>,
@@ -114,11 +134,16 @@ struct Meaning {
 
 impl Index {
     pub fn new(vault: &Vault) -> Self {
-        Self { graph: graph::build(vault), meaning: None }
+        Self {
+            graph: graph::build(vault),
+            #[cfg(feature = "meaning")]
+            meaning: None,
+        }
     }
 
     /// Embeds every record's sentence and every intent phrasing.
-    pub fn embed(&mut self, embedder: &mut Embedder) -> model::Result<()> {
+    #[cfg(feature = "meaning")]
+    pub fn embed(&mut self, embedder: &mut Embedder) -> crate::Result<()> {
         let texts: Vec<String> = self.graph.nodes.iter().map(|n| n.text.clone()).collect();
         let nodes = embedder.embed_documents(&texts)?;
         let mut example_intent = Vec::new();
@@ -131,10 +156,18 @@ impl Index {
         }
         // Compared with the rest of a question, symmetrically: both without the prefix.
         let examples = embedder.embed_texts(&phrasings)?;
-        self.meaning = Some(Meaning { dim: embedder.dim(), intent_min: embedder.intent_min(), nodes, examples, example_intent });
+        self.meaning = Some(Meaning {
+            dim: embedder.dim(),
+            z_min: embedder.z_min(),
+            intent_z: embedder.intent_z(),
+            nodes,
+            examples,
+            example_intent,
+        });
         Ok(())
     }
 
+    #[cfg(feature = "meaning")]
     pub fn node_vector(&self, i: usize) -> Option<&[f32]> {
         self.meaning.as_ref().map(|m| &m.nodes[i * m.dim..(i + 1) * m.dim])
     }
@@ -300,8 +333,24 @@ fn plain(graph: &Graph, i: usize) -> SearchNode {
     graph.nodes[i].node.clone()
 }
 
+/// How far the closest record stands above the vault's typical similarity to a phrase
+/// (standard deviations): how much the phrase reads as naming a record.
+#[cfg(feature = "meaning")]
+fn closest_record_z(index: &Index, phrase: &[f32]) -> f32 {
+    let m = index.meaning.as_ref().expect("embedded");
+    let n = index.graph.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let sims: Vec<f32> = (0..n).map(|i| dot(phrase, &m.nodes[i * m.dim..(i + 1) * m.dim])).collect();
+    let mean = sims.iter().sum::<f32>() / n as f32;
+    let sd = (sims.iter().map(|s| (s - mean).powi(2)).sum::<f32>() / n as f32).sqrt().max(1e-6);
+    (sims.iter().copied().fold(f32::MIN, f32::max) - mean) / sd
+}
+
 /// Similarity of a phrase vector to every record: the records that stand out, best
 /// first, each with its quality as an anchor.
+#[cfg(feature = "meaning")]
 fn meaning_matches(index: &Index, phrase: &[f32], p: &Params) -> Vec<(usize, f64)> {
     let m = index.meaning.as_ref().expect("embedded");
     let n = index.graph.len();
@@ -315,7 +364,10 @@ fn meaning_matches(index: &Index, phrase: &[f32], p: &Params) -> Vec<(usize, f64
     order.sort_by(|&a, &b| sims[b].total_cmp(&sims[a]));
     let best = sims[order[0]];
     let z_best = (best - mean) / sd;
-    if z_best < p.z_min {
+    // With n records none can stand more than √(n−1) deviations above the rest: a small
+    // vault (a new one, six records) must still be reachable.
+    let z_min = p.z_min.unwrap_or(m.z_min).min(0.75 * ((n - 1) as f32).sqrt());
+    if z_best < z_min {
         return Vec::new();
     }
     order
@@ -323,7 +375,7 @@ fn meaning_matches(index: &Index, phrase: &[f32], p: &Params) -> Vec<(usize, f64
         .take(p.max_meaning)
         .filter(|&i| {
             let z = (sims[i] - mean) / sd;
-            z >= p.z_min && sims[i] >= best - p.keep_within
+            z >= z_min && sims[i] >= best - p.keep_within
         })
         .map(|i| (i, p.meaning_quality * f64::from((sims[i] - mean) / sd / z_best)))
         .collect()
@@ -331,6 +383,7 @@ fn meaning_matches(index: &Index, phrase: &[f32], p: &Params) -> Vec<(usize, f64
 
 /// Reciprocal rank fusion of ranked lists; qualities scaled so the fused best keeps
 /// the best quality either list had.
+#[cfg(feature = "meaning")]
 fn fuse(lists: &[&[(usize, f64)]], k: f64) -> Vec<(usize, f64)> {
     let mut score: Vec<(usize, f64)> = Vec::new();
     for list in lists {
@@ -352,6 +405,7 @@ fn fuse(lists: &[&[(usize, f64)]], k: f64) -> Vec<(usize, f64)> {
 /// record the question named, worded from the candidate's side ("spotify.com signs in
 /// with apple.com", not "apple.com used to sign in to spotify.com"): questions are
 /// phrased about what they ask for, and the cross-encoder reads words, not structure.
+#[cfg(feature = "meaning")]
 fn describe(graph: &Graph, hit: &SearchHit) -> String {
     let mut text = graph.find(&hit.node.id).map_or_else(|| hit.node.title.clone(), |i| graph.nodes[i].text.clone());
     let ids: Vec<usize> = hit.path.iter().filter_map(|s| graph.find(&s.node.id)).collect();
@@ -373,11 +427,14 @@ fn describe(graph: &Graph, hit: &SearchHit) -> String {
     text
 }
 
-pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Options) -> model::Result<(SearchResponse, Timing)> {
+pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Options) -> crate::Result<(SearchResponse, Timing)> {
     let started = Instant::now();
     let mut timing = Timing::default();
     let graph = &index.graph;
+    #[cfg(feature = "meaning")]
     let p = &opts.params;
+    // Meaning may add to what is wanted and mark words it used.
+    #[cfg_attr(not(feature = "meaning"), allow(unused_mut))]
     let (mut wanted, names) = read(query);
 
     // Names, two words at a time first: "auto transfert" → autotransfert.
@@ -425,9 +482,15 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
     }
 
     // Meaning: what the words that are not exact names ask for, and what they name.
+    #[cfg_attr(not(feature = "meaning"), allow(unused_mut))]
     let mut meaning_used = vec![false; names.len()];
+    #[cfg(feature = "meaning")]
     let mut question_vector: Option<Vec<f32>> = None;
+    #[cfg(feature = "meaning")]
     let mut models = models;
+    #[cfg(not(feature = "meaning"))]
+    let _ = (models, &exact, &mut timing);
+    #[cfg(feature = "meaning")]
     if opts.meaning
         && index.meaning.is_some()
         && let Some(m) = models.as_mut()
@@ -458,6 +521,11 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
             if whole {
                 batch.push(format!("{prefix}{query}"));
             }
+            // The rest again, as a search: does it name a record more than it asks?
+            let naming_at = batch.len();
+            if asks {
+                batch.push(format!("{prefix}{}", rest.join(" ")));
+            }
             let t = Instant::now();
             let vectors = m.embedder.embed_texts(&batch)?;
             timing.embed = t.elapsed();
@@ -467,19 +535,30 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
                 question_vector = Some(vectors[(runs.len() + 1) * dim..(runs.len() + 2) * dim].to_vec());
             }
 
-            // Is the rest of the question a way of asking for something?
+            // Is the rest of the question a way of asking for something? Only if one
+            // intent's phrasing stands well clear of all the others.
             let mut best: Option<(usize, f32)> = None;
             if asks {
-                for (e, &intent_index) in meaning.example_intent.iter().enumerate() {
-                    let s = dot(&vectors[..dim], &meaning.examples[e * dim..(e + 1) * dim]);
+                let sims: Vec<f32> = (0..meaning.example_intent.len())
+                    .map(|e| dot(&vectors[..dim], &meaning.examples[e * dim..(e + 1) * dim]))
+                    .collect();
+                let n = sims.len() as f32;
+                let mean = sims.iter().sum::<f32>() / n;
+                let sd = (sims.iter().map(|s| (s - mean).powi(2)).sum::<f32>() / n).sqrt().max(1e-6);
+                for (e, &s) in sims.iter().enumerate() {
                     if best.is_none_or(|(_, b)| s > b) {
-                        best = Some((intent_index, s));
+                        best = Some((meaning.example_intent[e], s));
                     }
                 }
+                best = best.map(|(intent, s)| (intent, (s - mean) / sd));
             }
+            // "taxes" stands out towards Files (tax documents) but far more towards
+            // impots.gouv.fr: it names something. "how do i log in to" names nothing.
+            let naming = if asks { closest_record_z(index, &vectors[naming_at * dim..(naming_at + 1) * dim]) } else { 0.0 };
             let mut runs_left: Vec<usize> = (0..runs.len()).collect();
-            if let Some((found, s)) = best
-                && s >= p.intent_min.unwrap_or(meaning.intent_min)
+            if let Some((found, z)) = best
+                && z >= p.intent_z.unwrap_or(meaning.intent_z)
+                && z > naming
                 && !wanted.iter().any(|w| w.intent == found)
             {
                 // The words that were not exact names were the asking ("log", "depends").
@@ -636,6 +715,7 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
     }
 
     // The whole question's closeness to each record, against the vault's typical closeness.
+    #[cfg(feature = "meaning")]
     if let (Some(q), Some(meaning)) = (&question_vector, &index.meaning)
         && hits.len() > 1
     {
@@ -659,6 +739,7 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
     }
 
     // Rerank the best candidates, each read with its path.
+    #[cfg(feature = "meaning")]
     if opts.rerank
         && hits.len() > 1
         && let Some(reranker) = models.as_mut().and_then(|m| m.reranker.as_mut())
@@ -693,8 +774,10 @@ pub fn search(index: &Index, query: &str, models: Option<Models<'_>>, opts: &Opt
 }
 
 /// What meaning sees in a phrase: the closest records (similarity, z-score) as an
-/// anchor phrase, and the closest intents as the rest of a question. For tuning.
-pub fn probe(index: &Index, embedder: &mut Embedder, phrase: &str, top: usize) -> model::Result<(Vec<(String, f32, f32)>, Vec<(&'static str, f32)>)> {
+/// anchor phrase, and the closest intents (z-score among all phrasings) as the rest of
+/// a question. For tuning.
+#[cfg(feature = "meaning")]
+pub fn probe(index: &Index, embedder: &mut Embedder, phrase: &str, top: usize) -> crate::Result<(Vec<(String, f32, f32)>, Vec<(&'static str, f32)>)> {
     let m = index.meaning.as_ref().ok_or("index not embedded")?;
     let v = embedder.embed_texts(&[format!("{}{phrase}", embedder.query_prefix()), phrase.to_owned()])?;
     let (anchor, rest) = (&v[..m.dim], &v[m.dim..]);
@@ -705,9 +788,15 @@ pub fn probe(index: &Index, embedder: &mut Embedder, phrase: &str, top: usize) -
     let mut nodes: Vec<(String, f32, f32)> = (0..n).map(|i| (index.graph.nodes[i].node.id.clone(), sims[i], (sims[i] - mean) / sd)).collect();
     nodes.sort_by(|a, b| b.1.total_cmp(&a.1));
     nodes.truncate(top);
+    let all: Vec<f32> = (0..m.example_intent.len()).map(|e| dot(rest, &m.examples[e * m.dim..(e + 1) * m.dim])).collect();
+    let k = all.len() as f32;
+    let (mu, sigma) = {
+        let mean = all.iter().sum::<f32>() / k;
+        (mean, (all.iter().map(|s| (s - mean).powi(2)).sum::<f32>() / k).sqrt().max(1e-6))
+    };
     let mut intents: Vec<(&'static str, f32)> = Vec::new();
     for (e, &i) in m.example_intent.iter().enumerate() {
-        let s = dot(rest, &m.examples[e * m.dim..(e + 1) * m.dim]);
+        let s = (all[e] - mu) / sigma;
         match intents.iter_mut().find(|(label, _)| *label == INTENTS[i].label) {
             Some((_, best)) => *best = best.max(s),
             None => intents.push((INTENTS[i].label, s)),
@@ -719,6 +808,7 @@ pub fn probe(index: &Index, embedder: &mut Embedder, phrase: &str, top: usize) -
 }
 
 /// The text the reranker reads for a hit: the record, then the path that reaches it.
+#[cfg(feature = "meaning")]
 pub fn rerank_text(index: &Index, hit: &SearchHit) -> String {
     describe(&index.graph, hit)
 }

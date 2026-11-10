@@ -310,11 +310,11 @@ export interface VaultApi {
   stageDroppedFiles: () => Promise<IpcResult<StagedList>>
   unstageFile: (token: number) => Promise<IpcResult<StagedList>>
   clearStagedFiles: () => Promise<IpcResult<void>>
-  /** Encrypts the chosen files into the project, each with its description. */
+  /** Encrypts the chosen files into the project, each with its name (as renamed there) and description. */
   importStagedFiles: (
     projectId: number,
     serviceId: number | null,
-    files: { token: number; description: string }[]
+    files: { token: number; name: string; description: string }[]
   ) => Promise<IpcResult<ImportReport>>
   exportSecret: (secretId: number) => Promise<IpcResult<{ saved: boolean }>>
   listAccountLinks: () => Promise<IpcResult<{ links: AccountLink[] }>>
