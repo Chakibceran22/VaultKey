@@ -107,9 +107,40 @@ fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The menu item Cmd+M triggers.
+#[cfg(target_os = "macos")]
+const TOGGLE_FULLSCREEN: &str = "toggle-fullscreen";
+
+/// macOS's default menu, except that Cmd+M toggles full screen instead of minimizing
+/// (the yellow window button still minimizes).
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
+    let menu = Menu::default(app)?;
+    if let Some(MenuItemKind::Submenu(window_menu)) = menu.get(WINDOW_SUBMENU_ID) {
+        // Minimize, which owns Cmd+M.
+        window_menu.remove_at(0)?;
+        let toggle = MenuItem::with_id(app, TOGGLE_FULLSCREEN, "Toggle Full Screen", true, Some("Cmd+M"))?;
+        window_menu.insert(&toggle, 0)?;
+    }
+    Ok(menu)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu).on_menu_event(|app, event| {
+        if event.id() == TOGGLE_FULLSCREEN
+            && let Some(window) = app.get_webview_window(MAIN_WINDOW)
+        {
+            let full = window.is_fullscreen().unwrap_or(false);
+            if let Err(error) = window.set_fullscreen(!full) {
+                eprintln!("[vault] could not toggle full screen: {error}");
+            }
+        }
+    });
+    let app = builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
