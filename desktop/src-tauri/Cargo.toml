@@ -10,6 +10,11 @@ edition = "2024"
 name = "vaultkey_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[workspace]
+# `search`: the graph search engine and its models, free of Tauri and the database so
+# it builds and is evaluated on its own (docs/graph-search.md).
+members = ["search"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -64,6 +69,9 @@ opt-level = 3
 [profile.dev.package.aes]
 opt-level = 3
 [profile.dev.package.aes-gcm]
+opt-level = 3
+# Search: tokenizing runs on every keystroke (the model itself is prebuilt ONNX Runtime).
+[profile.dev.package.tokenizers]
 opt-level = 3
 
 # See https://tauri.app/concept/size/#cargo-configuration

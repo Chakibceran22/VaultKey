@@ -1,0 +1,18 @@
+[package]
+name = "vaultkey-search"
+version = "0.1.0"
+description = "VaultKey graph search: words, meaning (embeddings), links and a reranker, all local"
+edition = "2024"
+publish = false
+
+[dependencies]
+# ONNX Runtime on the CPU, statically linked (no dylib to ship, nothing fetched at run time).
+ort = "=2.0.0-rc.15"
+# Only the WordPiece path is used; no progress bars, no training code.
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"] }
+# Accent folding ("Électricité" → electricite); already a dependency of tokenizers.
+unicode-normalization-alignments = "0.1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
