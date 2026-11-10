@@ -202,6 +202,7 @@ pub fn run() {
             commands::update_account_secret,
             commands::reveal_account_secret,
             commands::delete_account_secret,
+            commands::set_account_category,
             commands::set_account_devices,
             commands::set_account_connections,
         ])

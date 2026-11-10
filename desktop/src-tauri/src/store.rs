@@ -237,6 +237,8 @@ pub struct AccountSummary {
     /// False for an account saved without a password (it signs in with another
     /// account, a passkey, or only keeps secrets). Known without decrypting.
     pub has_password: bool,
+    /// The group chosen for it by hand; None when the UI guesses one.
+    pub category: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -254,9 +256,10 @@ fn seals_something(ciphertext: &str) -> bool {
 
 pub fn list_accounts(conn: &Connection) -> VaultResult<Vec<AccountSummary>> {
     let mut statement = conn.prepare_cached(
-        "SELECT c.id, c.domain_id, d.name, c.username, c.email, c.created_at, c.updated_at, c.password
+        "SELECT c.id, c.domain_id, d.name, c.username, c.email, c.created_at, c.updated_at, c.password, ac.name
          FROM credentials c
          JOIN domains d ON d.id = c.domain_id
+         LEFT JOIN account_categories ac ON ac.account_id = c.id
          ORDER BY d.name COLLATE NOCASE ASC, c.email COLLATE NOCASE ASC, c.id ASC",
     )?;
     let rows = statement.query_map([], |row| {
@@ -267,6 +270,7 @@ pub fn list_accounts(conn: &Connection) -> VaultResult<Vec<AccountSummary>> {
             username: row.get(3)?,
             email: row.get(4)?,
             has_password: seals_something(&row.get::<_, String>(7)?),
+            category: row.get(8)?,
             created_at: row.get(5)?,
             updated_at: row.get(6)?,
         })

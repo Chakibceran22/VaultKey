@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus } from '@phosphor-icons/react'
+import { Globe, Plus } from '@phosphor-icons/react'
+import type { Icon } from '@phosphor-icons/react'
 import { AccountModal } from '@renderer/components/accounts/AccountModal'
-import { AccountRow, WebsiteRow } from '@renderer/components/accounts/rows'
-import { EmptyFrame, ListFrame, Page, PageHeader } from '@renderer/components/layout/page'
+import { AccountItem, EmptyWebsiteItem } from '@renderer/components/accounts/rows'
+import { EmptyFrame, Page, PageHeader } from '@renderer/components/layout/page'
 import { Button } from '@renderer/components/ui/button'
 import { useConfirm } from '@renderer/components/ui/confirm'
 import { SearchField } from '@renderer/components/ui/controls'
 import { Spinner } from '@renderer/components/ui/misc'
-import { matches, plural, useDomains, useListRows, useRelations } from '@renderer/hooks/use-vault'
+import { matches, plural, useDomains, useListRows, useRelations, type ListRow } from '@renderer/hooks/use-vault'
+import { categoryIcon, categoryOf, categoryOrder } from '@renderer/lib/categories'
 import { isModKey, isTyping, MOD, isOverlayOpen } from '@renderer/lib/dom'
 
 const rowDomId = (key: string): string => `row-${key}`
+const NO_ACCOUNT = 'Websites with no account'
 
 /** Kept after closing, so the modal's content doesn't change while it fades out. */
 interface ModalState {
@@ -20,9 +23,19 @@ interface ModalState {
   website: string
 }
 
+interface Group {
+  name: string
+  icon: Icon
+  rows: ListRow[]
+}
+
 /**
- * Pattern: List / Index. Search, one row per account; a row opens the account's
- * page. Websites without an account open in place. New accounts are made in a modal.
+ * Pattern: List / Index, laid out as groups. Accounts are grouped by what they
+ * are for (Games, Money, Developer and cloud…), each group a panel of the same
+ * fixed size in an even grid, scrolling inside when it holds more than fits, so
+ * the vault reads as a few short lists instead of one long one. The group is
+ * guessed from the website until it is set on the account. Search filters every
+ * group, and a group's name finds the whole group.
  */
 export default function Accounts(): React.ReactElement {
   const navigate = useNavigate()
@@ -40,9 +53,25 @@ export default function Accounts(): React.ReactElement {
   const searchRef = useRef<HTMLInputElement>(null)
 
   const needle = query.trim().toLowerCase()
-  const visible = useMemo(() => rows.filter((row) => matches(row, needle)), [rows, needle])
-  const current = visible.length ? Math.min(active, visible.length - 1) : -1
   const accountCount = rows.filter((row) => row.kind === 'account').length
+
+  // Groups in their fixed order; websites with no account last.
+  const groups = useMemo<Group[]>(() => {
+    const byName = new Map<string, ListRow[]>()
+    for (const row of rows) {
+      const name = row.kind === 'account' ? categoryOf(row.account) : NO_ACCOUNT
+      const hit = !needle || matches(row, needle) || (row.kind === 'account' && name.toLowerCase().includes(needle))
+      if (!hit) continue
+      byName.set(name, [...(byName.get(name) ?? []), row])
+    }
+    return [...byName.entries()]
+      .sort(([a], [b]) => (a === NO_ACCOUNT ? 1 : b === NO_ACCOUNT ? -1 : categoryOrder(a, b)))
+      .map(([name, groupRows]) => ({ name, icon: name === NO_ACCOUNT ? Globe : categoryIcon(name), rows: groupRows }))
+  }, [rows, needle])
+
+  // Arrow keys move through the rows in reading order: group by group.
+  const visible = useMemo(() => groups.flatMap((group) => group.rows), [groups])
+  const current = visible.length ? Math.min(active, visible.length - 1) : -1
 
   const openAccount = (accountId: number): void => {
     navigate(`/accounts/${accountId}`)
@@ -76,15 +105,15 @@ export default function Accounts(): React.ReactElement {
     if (current >= 0) document.getElementById(rowDomId(visible[current].key))?.scrollIntoView({ block: 'nearest' })
   }, [current, visible])
 
-  const toggle = (key: string, index: number): void => {
-    setActive(index)
+  const toggle = (key: string): void => {
+    setActive(visible.findIndex((row) => row.key === key))
     setExpanded((open) => (open === key ? null : key))
   }
 
   const activate = (index: number): void => {
     const row = visible[index]
     if (row.kind === 'account') openAccount(row.account.id)
-    else toggle(row.key, index)
+    else toggle(row.key)
   }
 
   const onSearchKey = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -104,11 +133,17 @@ export default function Accounts(): React.ReactElement {
     }
   }
 
+  const activeKey = current >= 0 ? visible[current].key : null
+
   return (
-    <Page>
+    <Page wide>
       <PageHeader
         title="Accounts"
-        description="Every login you keep: how it signs in, what protects it, and where it is used."
+        description={
+          accountCount > 0
+            ? `${plural(accountCount, 'account')} on ${plural(domains.length, 'website')}, grouped by what they are for.`
+            : 'Every login you keep: how it signs in, what protects it, and where it is used.'
+        }
         actions={
           <Button variant="primary" size="lg" onClick={() => openNew()} title={`New account (${MOD}N)`}>
             <Plus size={14} weight="bold" />
@@ -126,16 +161,19 @@ export default function Accounts(): React.ReactElement {
             setActive(-1)
           }}
           onKeyDown={onSearchKey}
-          placeholder="Search accounts"
+          placeholder="Search accounts, or a group like “games”"
           role="combobox"
           aria-expanded="true"
-          aria-controls="account-list"
-          aria-activedescendant={current >= 0 ? rowDomId(visible[current].key) : undefined}
+          aria-controls="account-groups"
+          aria-activedescendant={activeKey ? rowDomId(activeKey) : undefined}
           autoFocus
         />
+        <p aria-live="polite" className="mt-2 h-4 px-1 text-[12.5px] text-muted-foreground tabular-nums">
+          {needle && visible.length > 0 ? `${plural(visible.length, 'result')} for “${query.trim()}”` : ''}
+        </p>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-3">
         {isLoading ? (
           <div className="flex justify-center py-16 text-muted-foreground">
             <Spinner size={20} />
@@ -144,7 +182,9 @@ export default function Accounts(): React.ReactElement {
           <EmptyFrame
             title={needle ? `No account matches “${query.trim()}”` : 'No accounts yet'}
             description={
-              needle ? 'Check the spelling, or save it as a new account.' : 'Save the logins you use, with their passwords or the account they sign in with.'
+              needle
+                ? 'Check the spelling, or save it as a new account.'
+                : 'Save the logins you use, with their passwords or the account they sign in with.'
             }
             action={
               <Button variant="primary" size="lg" onClick={() => openNew(needle ? query.trim() : '')}>
@@ -154,39 +194,36 @@ export default function Accounts(): React.ReactElement {
             }
           />
         ) : (
-          <ListFrame
-            id="account-list"
-            footer={
-              needle
-                ? `${plural(visible.length, 'result')} for “${query.trim()}”`
-                : `${plural(accountCount, 'account')} on ${plural(domains.length, 'website')}`
-            }
-          >
-            {visible.map((row, index) =>
-              row.kind === 'account' ? (
-                <AccountRow
-                  key={row.key}
-                  rowId={rowDomId(row.key)}
-                  account={row.account}
-                  relations={relationsOf(row.account.id)}
-                  active={index === current}
-                  onOpen={() => openAccount(row.account.id)}
-                />
-              ) : (
-                <WebsiteRow
-                  key={row.key}
-                  rowId={rowDomId(row.key)}
-                  domain={row.domain}
-                  expanded={expanded === row.key}
-                  active={index === current}
-                  onToggle={() => toggle(row.key, index)}
-                  onCollapse={() => setExpanded(null)}
-                  confirm={confirm}
-                  onAddAccount={openNew}
-                />
-              )
-            )}
-          </ListFrame>
+          <div id="account-groups" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {groups.map((group) => (
+              <GroupPanel key={group.name} name={group.name} icon={group.icon} count={group.rows.length}>
+                {group.rows.map((row) =>
+                  row.kind === 'account' ? (
+                    <AccountItem
+                      key={row.key}
+                      rowId={rowDomId(row.key)}
+                      account={row.account}
+                      relations={relationsOf(row.account.id)}
+                      active={row.key === activeKey}
+                      onOpen={() => openAccount(row.account.id)}
+                    />
+                  ) : (
+                    <EmptyWebsiteItem
+                      key={row.key}
+                      rowId={rowDomId(row.key)}
+                      domain={row.domain}
+                      expanded={expanded === row.key}
+                      active={row.key === activeKey}
+                      onToggle={() => toggle(row.key)}
+                      onCollapse={() => setExpanded(null)}
+                      confirm={confirm}
+                      onAddAccount={openNew}
+                    />
+                  )
+                )}
+              </GroupPanel>
+            ))}
+          </div>
         )}
       </div>
 
@@ -198,5 +235,29 @@ export default function Accounts(): React.ReactElement {
       />
       {dialog}
     </Page>
+  )
+}
+
+/**
+ * One group: its name and count, then its accounts. Every panel has the same
+ * fixed height, so the grid keeps one even shape however many accounts a group
+ * has; a long group scrolls inside its own panel.
+ */
+function GroupPanel({ name, icon: GroupIcon, count, children }: { name: string; icon: Icon; count: number; children: ReactNode }) {
+  const headingId = useId()
+  return (
+    <section aria-labelledby={headingId} className="frost flex h-[22rem] flex-col overflow-hidden rounded-2xl">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3.5">
+        <GroupIcon size={15} className="shrink-0 text-muted-foreground" />
+        <h2 id={headingId} className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-heading">
+          {name}
+        </h2>
+        <span className="text-[12.5px] text-muted-foreground tabular-nums">
+          <span className="sr-only">, </span>
+          {count}
+        </span>
+      </div>
+      <ul className="panel-scroll min-h-0 flex-1 divide-y divide-border overflow-y-auto overscroll-contain">{children}</ul>
+    </section>
   )
 }

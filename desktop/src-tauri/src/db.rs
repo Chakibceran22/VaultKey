@@ -91,6 +91,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "devices-factors-account-secrets",
         sql: include_str!("migrations/0003_account_details.sql"),
     },
+    Migration {
+        version: 4,
+        name: "account-categories",
+        sql: include_str!("migrations/0004_account_categories.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.

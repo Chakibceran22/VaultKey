@@ -3,9 +3,10 @@ import { m } from 'framer-motion'
 import { ArrowsClockwise } from '@phosphor-icons/react'
 import type { AccountSummary, Device } from '@renderer/shared/contracts'
 import { StrengthMeter } from '@renderer/components/StrengthMeter'
-import { AccountPicker, Segmented } from '@renderer/components/ui/controls'
+import { AccountPicker, Segmented, Select } from '@renderer/components/ui/controls'
 import { IconButton } from '@renderer/components/ui/icon-button'
 import { Field, Input, PasswordInput } from '@renderer/components/ui/input'
+import { CATEGORIES, guessCategory } from '@renderer/lib/categories'
 import type { AccountDraft } from '@renderer/lib/vault-actions'
 import { generatePassword } from '@renderer/lib/password'
 import { cn } from '@renderer/lib/utils'
@@ -30,6 +31,7 @@ export function AccountFields({
   accounts,
   devices,
   excludeId,
+  showCategory = false,
   autoFocus = false
 }: {
   draft: AccountDraft
@@ -40,6 +42,8 @@ export function AccountFields({
   devices?: Device[]
   /** The account being edited (it can't sign in with itself). */
   excludeId?: number
+  /** The group it is shown in on the Accounts page (the full form only). */
+  showCategory?: boolean
   autoFocus?: boolean
 }) {
   const [revealed, setRevealed] = useState(false)
@@ -80,6 +84,25 @@ export function AccountFields({
       <Field label="Username" hint="Optional">
         {(id) => <Input id={id} value={draft.username} onChange={(e) => set('username', e.target.value)} />}
       </Field>
+      {showCategory && (
+        <Field label="Group" hint="Where it is listed on the Accounts page">
+          {(id) => (
+            <Select id={id} value={draft.category} onChange={(e) => set('category', e.target.value)}>
+              <option value="">
+                {draft.website.trim() ? `Automatic: ${guessCategory(draft.website)}` : 'Automatic, from the website'}
+              </option>
+              {CATEGORIES.map((category) => (
+                <option key={category.name} value={category.name}>
+                  {category.name}
+                </option>
+              ))}
+              {draft.category && !CATEGORIES.some((c) => c.name === draft.category) && (
+                <option value={draft.category}>{draft.category}</option>
+              )}
+            </Select>
+          )}
+        </Field>
+      )}
 
       <div className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">

@@ -25,6 +25,8 @@ export interface AccountDraft {
    */
   method: 'password' | 'linked' | 'none'
   password: string
+  /** The group it is shown in; '' lets the app guess from the website. */
+  category: string
   signInWith: number[]
   /** Accounts that can recover this one (its recovery email). */
   recoveryBy: number[]
@@ -39,6 +41,7 @@ export function emptyAccountDraft(website = ''): AccountDraft {
     email: '',
     method: 'password',
     password: '',
+    category: '',
     signInWith: [],
     recoveryBy: [],
     deviceIds: []
@@ -91,11 +94,12 @@ export async function createAccount(
   }
   try {
     await saveConnections(id, draft)
+    if (draft.category) unwrap(await api.setAccountCategory(id, draft.category))
   } catch (error) {
     // The account itself is saved: report the links, don't fail (a retry would
     // try to create the same account again).
     const reason = error instanceof Error && error.message ? error.message : 'they could not be saved'
-    toast.error(`Account saved, but not its links and devices: ${reason}`)
+    toast.error(`Account saved, but not its group, links and devices: ${reason}`)
   } finally {
     await refreshVault(queryClient, domainId)
   }
@@ -115,6 +119,9 @@ export async function updateAccount(
   })
   try {
     await saveConnections(account.id, draft)
+    if (draft.category !== (account.category ?? '')) {
+      unwrap(await api.setAccountCategory(account.id, draft.category || null))
+    }
   } finally {
     await refreshVault(queryClient, account.domainId)
   }

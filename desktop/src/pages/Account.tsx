@@ -1,14 +1,13 @@
 import { useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Tabs } from '@base-ui/react/tabs'
-import { LinkSimple, PencilSimple, Plus, Trash } from '@phosphor-icons/react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { PencilSimple, Plus, Trash } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AccountSecretMeta, Factor, FactorKind } from '@renderer/shared/contracts'
 import { AccountModal } from '@renderer/components/accounts/AccountModal'
 import { AccountSecretModal } from '@renderer/components/accounts/AccountSecretModal'
 import { FactorModal } from '@renderer/components/accounts/FactorModal'
 import { DEVICES, FACTOR_KINDS, FACTORS } from '@renderer/components/accounts/kinds'
-import { LinkLine } from '@renderer/components/accounts/parts'
+import { RelatedGroup } from '@renderer/components/accounts/parts'
 import {
   AccountSecretRow,
   EmailWay,
@@ -19,7 +18,17 @@ import {
   SignInWithWay,
   UsernameWay
 } from '@renderer/components/accounts/sections'
-import { EmptyFrame, ListFrame, Page, PageHeader } from '@renderer/components/layout/page'
+import {
+  EmptyFrame,
+  EmptyLine,
+  History,
+  ListFrame,
+  Page,
+  PageHeader,
+  RecordColumns,
+  Section,
+  useShowSection
+} from '@renderer/components/layout/page'
 import { Button } from '@renderer/components/ui/button'
 import { useConfirm } from '@renderer/components/ui/confirm'
 import { SiteTile, Spinner } from '@renderer/components/ui/misc'
@@ -32,12 +41,10 @@ import {
   useRelations
 } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
+import { guessCategory } from '@renderer/lib/categories'
 import { credentialsService } from '@renderer/lib/credentialsService'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
-
-type Tab = 'sign-in' | 'secrets' | 'connections'
-const TABS: Tab[] = ['sign-in', 'secrets', 'connections']
 
 /** Kept after closing, so a modal's content doesn't change while it fades out. */
 type ModalState =
@@ -46,9 +53,10 @@ type ModalState =
   | { open: boolean; kind: 'secret'; secret: AccountSecretMeta | null }
 
 /**
- * Pattern: Detail / Record. One account and everything it takes to get into it:
- * how it signs in, its second steps and recovery, the secrets and notes kept
- * with it, and what it connects to. Adding and editing happen in a modal.
+ * Pattern: Detail / Record. One account and everything it takes to get into it,
+ * on one screen: how it signs in, its second steps and recovery, and the secrets
+ * and notes kept with it; beside them, what it connects to. Adding and editing
+ * happen in a modal.
  */
 export default function AccountPage(): React.ReactElement {
   // A fresh page per account: nothing shown, typed or open carries over to the next one.
@@ -59,9 +67,6 @@ export default function AccountPage(): React.ReactElement {
 function AccountView({ accountId }: { accountId: number }): React.ReactElement {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [params, setParams] = useSearchParams()
-  const tab: Tab = TABS.includes(params.get('tab') as Tab) ? (params.get('tab') as Tab) : 'sign-in'
-  const setTab = (next: Tab): void => setParams({ tab: next }, { replace: true })
   const { accounts, isLoading } = useAccounts()
   const { devices } = useAccountDetails()
   const relationsOf = useRelations()
@@ -71,6 +76,7 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
 
   const account = accounts.find((a) => a.id === accountId)
   const relations = relationsOf(accountId)
+  useShowSection(!!account)
 
   if (!account) {
     return (
@@ -104,8 +110,6 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
   const openDevice = (deviceId: number): void => {
     navigate(`/devices?open=${deviceId}`)
   }
-  const connectionCount =
-    relations.usedBy.length + relations.recovers.length + relations.devices.length + relations.services.length
 
   const removeAccount = async (): Promise<void> => {
     const steps = relations.factors.length
@@ -179,12 +183,6 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
   const addStep = (): void => setModal({ open: true, kind: 'factor', factor: null })
   const addSecret = (): void => setModal({ open: true, kind: 'secret', secret: null })
   const editAccount = (): void => setModal({ open: true, kind: 'account' })
-  const count = (n: number) => (
-    <span className="ml-1.5 text-muted-foreground tabular-nums">
-      <span className="sr-only">, </span>
-      {n}
-    </span>
-  )
 
   // What protects it, at a glance: one quiet chip per kind.
   const kinds = [...new Set(steps.map((f) => f.kind))] as FactorKind[]
@@ -201,7 +199,7 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
   ]
 
   return (
-    <Page>
+    <Page wide>
       <PageHeader
         crumbs={[{ to: '/accounts', label: 'Accounts' }]}
         actionsAtTop
@@ -253,176 +251,161 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
         }
       />
 
-      <Tabs.Root value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-8">
-        <div className="flex items-end justify-between gap-4 border-b">
-          <Tabs.List className="relative flex gap-6">
-            {(
-              [
-                ['sign-in', 'Sign-in', steps.length + (relations.recoveredBy.length ? 1 : 0)],
-                ['secrets', 'Secrets and notes', relations.secrets.length],
-                ['connections', 'Connections', connectionCount]
-              ] as const
-            ).map(([value, label, n]) => (
-              <Tabs.Tab
-                key={value}
-                value={value}
-                className="cursor-pointer pb-3 text-[14px] font-medium whitespace-nowrap text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-heading data-active:text-heading"
-              >
-                {label}
-                {count(n)}
-              </Tabs.Tab>
-            ))}
-            <Tabs.Indicator className="absolute bottom-[-1px] left-(--active-tab-left) h-0.5 w-(--active-tab-width) rounded-full bg-primary transition-[left,width] duration-200 ease-smooth motion-reduce:transition-none" />
-          </Tabs.List>
-          <div className="pb-2">
-            {tab === 'sign-in' && (
-              <Button size="md" onClick={addStep}>
-                <Plus size={13} weight="bold" />
-                Add sign-in step
-              </Button>
-            )}
-            {tab === 'secrets' && (
-              <Button size="md" onClick={addSecret}>
-                <Plus size={13} weight="bold" />
-                Add secret or note
-              </Button>
-            )}
-            {tab === 'connections' && (
-              <Button size="md" onClick={editAccount}>
-                <LinkSimple size={14} />
-                Edit connections
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <Tabs.Panel value="sign-in" className="mt-4 space-y-4 outline-none">
-          <ListFrame>
-            <EmailWay account={account} />
-            {account.username && <UsernameWay username={account.username} />}
-            {relations.signsInWith.length > 0 ? (
-              <SignInWithWay accounts={relations.signsInWith} />
-            ) : account.hasPassword ? (
-              <PasswordWay account={account} />
-            ) : (
-              <NoPasswordWay />
-            )}
-            {steps.map((factor) => (
-              <FactorWay
-                // Re-keyed on edit, so codes shown before the edit don't linger.
-                key={`${factor.id}-${factor.updatedAt}`}
-                factor={factor}
-                device={factor.deviceId ? deviceById.get(factor.deviceId) : undefined}
-                onEdit={() => setModal({ open: true, kind: 'factor', factor })}
-                onDelete={() => void removeFactor(factor)}
-                onOpenDevice={openDevice}
-              />
-            ))}
-            {relations.recoveredBy.length > 0 && <RecoveryAccountWay accounts={relations.recoveredBy} />}
-          </ListFrame>
-          {steps.length === 0 && relations.signsInWith.length > 0 && (
-            <p className="px-1 text-[12.5px] leading-relaxed text-muted-foreground">
-              It signs in with {relations.signsInWith.map((a) => a.domainName).join(' or ')}, so the second steps that
-              matter are saved there. Add one here only if {account.domainName} asks for its own.
-            </p>
-          )}
-          {steps.length === 0 && relations.signsInWith.length === 0 && (
-            <div className="rounded-2xl border border-dashed px-5 py-4 text-[13.5px] leading-relaxed text-muted-foreground">
-              <p className="font-medium text-heading">No second step saved</p>
-              <p className="mt-0.5">
-                Note the authenticator app, passkeys, security keys or recovery codes this account uses, so getting back in
-                never depends on remembering them.
-              </p>
-              <Button size="md" className="mt-3" onClick={addStep}>
-                <Plus size={13} weight="bold" />
-                Add sign-in step
-              </Button>
-            </div>
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel value="secrets" className="mt-4 outline-none">
-          {relations.secrets.length === 0 ? (
-            <EmptyFrame
-              title="No secrets or notes yet"
-              description="Tokens and keys that belong to this account, or anything about it you would otherwise have to remember."
+      <RecordColumns
+        main={
+          <>
+            <Section
+              id="section-sign-in"
+              title="Sign-in"
               action={
-                <Button variant="primary" size="lg" onClick={addSecret}>
-                  <Plus size={14} weight="bold" />
+                <Button size="md" onClick={addStep}>
+                  <Plus size={13} weight="bold" />
+                  Add sign-in step
+                </Button>
+              }
+            >
+              <ListFrame>
+                <EmailWay account={account} />
+                {account.username && <UsernameWay username={account.username} />}
+                {relations.signsInWith.length > 0 ? (
+                  <SignInWithWay accounts={relations.signsInWith} />
+                ) : account.hasPassword ? (
+                  <PasswordWay account={account} />
+                ) : (
+                  <NoPasswordWay />
+                )}
+                {steps.map((factor) => (
+                  <FactorWay
+                    // Re-keyed on edit, so codes shown before the edit don't linger.
+                    key={`${factor.id}-${factor.updatedAt}`}
+                    factor={factor}
+                    device={factor.deviceId ? deviceById.get(factor.deviceId) : undefined}
+                    onEdit={() => setModal({ open: true, kind: 'factor', factor })}
+                    onDelete={() => void removeFactor(factor)}
+                    onOpenDevice={openDevice}
+                  />
+                ))}
+                {relations.recoveredBy.length > 0 && <RecoveryAccountWay accounts={relations.recoveredBy} />}
+                {steps.length === 0 && relations.signsInWith.length === 0 && (
+                  <EmptyLine title="No second step saved.">
+                    Add the authenticator app, passkeys, security keys or recovery codes it uses, so getting back in never
+                    depends on remembering them.
+                  </EmptyLine>
+                )}
+              </ListFrame>
+              {steps.length === 0 && relations.signsInWith.length > 0 && (
+                <p className="mt-3 px-1 text-[12.5px] leading-relaxed text-muted-foreground">
+                  It signs in with {relations.signsInWith.map((a) => a.domainName).join(' or ')}, so the second steps that
+                  matter are saved there. Add one here only if {account.domainName} asks for its own.
+                </p>
+              )}
+            </Section>
+
+            <Section
+              id="section-secrets"
+              title="Secrets and notes"
+              action={
+                <Button size="md" onClick={addSecret}>
+                  <Plus size={13} weight="bold" />
                   Add secret or note
                 </Button>
               }
-            />
-          ) : (
-            <ListFrame footer={plural(relations.secrets.length, 'item')}>
-              {relations.secrets.map((secret) => (
-                <AccountSecretRow
-                  key={secret.id}
-                  secret={secret}
-                  onEdit={() => setModal({ open: true, kind: 'secret', secret })}
-                  onDelete={() => void removeSecret(secret)}
-                />
-              ))}
-            </ListFrame>
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel value="connections" className="mt-4 outline-none">
-          <ListFrame>
-            {(
-              [
-                [
-                  'Signs in to',
-                  relations.usedBy.map((a) => ({
+            >
+              <ListFrame footer={relations.secrets.length > 0 ? plural(relations.secrets.length, 'item') : undefined}>
+                {relations.secrets.map((secret) => (
+                  <AccountSecretRow
+                    key={secret.id}
+                    secret={secret}
+                    onEdit={() => setModal({ open: true, kind: 'secret', secret })}
+                    onDelete={() => void removeSecret(secret)}
+                  />
+                ))}
+                {relations.secrets.length === 0 && (
+                  <EmptyLine title="None yet.">
+                    Tokens and keys that belong to this account, or anything about it you would otherwise have to
+                    remember. Kept encrypted.
+                  </EmptyLine>
+                )}
+              </ListFrame>
+            </Section>
+          </>
+        }
+        side={
+          <>
+            <Section
+              title="Connections"
+              action={
+                <Button size="sm" variant="ghost" aria-label="Edit connections" onClick={editAccount}>
+                  <PencilSimple size={13} />
+                  Edit
+                </Button>
+              }
+            >
+              <div className="frost divide-y divide-border overflow-hidden rounded-2xl">
+                <RelatedGroup
+                  label="Signs in to"
+                  empty="No account signs in with it"
+                  items={relations.usedBy.map((a) => ({
                     key: `in-${a.id}`,
                     title: a.domainName,
                     detail: a.email,
                     onOpen: () => navigate(`/accounts/${a.id}`)
-                  })),
-                  'No account signs in with it'
-                ],
-                [
-                  'Recovers',
-                  relations.recovers.map((a) => ({
+                  }))}
+                />
+                <RelatedGroup
+                  label="Recovers"
+                  empty="It isn’t a recovery account"
+                  items={relations.recovers.map((a) => ({
                     key: `rec-${a.id}`,
                     title: a.domainName,
                     detail: a.email,
                     onOpen: () => navigate(`/accounts/${a.id}`)
-                  })),
-                  'It isn’t a recovery account'
-                ],
-                [
-                  'Signed in on',
-                  relations.devices.map((d) => ({
+                  }))}
+                />
+                <RelatedGroup
+                  label="Signed in on"
+                  empty="No device noted"
+                  items={relations.devices.map((d) => ({
                     key: `dev-${d.id}`,
                     title: d.name,
+                    detail: DEVICES[d.kind].name,
                     icon: DEVICES[d.kind].icon,
                     onOpen: () => openDevice(d.id)
-                  })),
-                  'No device noted'
-                ],
-                [
-                  'Used by',
-                  relations.services.map(({ service, project }) => ({
+                  }))}
+                />
+                <RelatedGroup
+                  label="Used in projects"
+                  empty="No project uses it"
+                  items={relations.services.map(({ service, project }) => ({
                     key: `svc-${service.id}`,
                     title: service.name,
                     detail: project.name,
-                    onOpen: () => navigate(`/projects/${project.id}?tab=services`)
-                  })),
-                  'No project service'
+                    onOpen: () => navigate(`/projects/${project.id}?show=services`)
+                  }))}
+                />
+              </div>
+              <p className="mt-3 px-1 text-[12px] leading-relaxed text-muted-foreground">
+                “Signs in to” and “Recovers” are set on the other account.
+              </p>
+            </Section>
+            <History
+              createdAt={account.createdAt}
+              updatedAt={account.updatedAt}
+              facts={[
+                [
+                  'Group',
+                  account.category ?? (
+                    <>
+                      {guessCategory(account.domainName)}
+                      <span className="text-muted-foreground">, guessed</span>
+                    </>
+                  )
                 ]
-              ] as const
-            ).map(([label, items, empty]) => (
-              <li key={label} className="px-4 py-1.5">
-                <LinkLine label={label} items={[...items]} empty={empty} />
-              </li>
-            ))}
-          </ListFrame>
-          <p className="mt-3 px-1 text-[12.5px] text-muted-foreground">
-            “Signs in to” and “Recovers” are set on the other account, with its sign-in method and recovery account.
-          </p>
-        </Tabs.Panel>
-      </Tabs.Root>
+              ]}
+            />
+          </>
+        }
+      />
 
       {modal.kind === 'account' && (
         <AccountModal
@@ -451,3 +434,4 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
     </Page>
   )
 }
+

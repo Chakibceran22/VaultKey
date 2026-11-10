@@ -52,6 +52,8 @@ export interface AccountSummary {
   email: string
   /** False when saved without a password (signs in with another account, a passkey, or only keeps secrets). */
   hasPassword: boolean
+  /** The group chosen for it by hand; null when the app guesses one from the website. */
+  category: string | null
   createdAt: string
   updatedAt: string
 }
@@ -289,6 +291,8 @@ export interface VaultApi {
   revealAccountSecret: (secretId: number) => Promise<IpcResult<{ value: string }>>
   deleteAccountSecret: (secretId: number) => Promise<IpcResult<void>>
   setAccountDevices: (accountId: number, deviceIds: number[]) => Promise<IpcResult<void>>
+  /** The group the account is shown in; null goes back to the guessed one. */
+  setAccountCategory: (accountId: number, name: string | null) => Promise<IpcResult<void>>
   /** Sign-in links, recovery links and devices, in one transaction. */
   setAccountConnections: (
     accountId: number,

@@ -25,8 +25,8 @@ use crate::validation::{
 };
 use crate::validation::{
     ACCOUNT_SECRET_KINDS, AccountSecretInput, AccountSecretUpdateInput, DeviceInput, FACTOR_KINDS,
-    FactorInput, FactorUpdateInput, MAX_SECRET_TEXT_BYTES, MAX_SETUP_KEY_BYTES, validate_device,
-    validate_kind, validate_label,
+    FactorInput, FactorUpdateInput, MAX_SECRET_TEXT_BYTES, MAX_SETUP_KEY_BYTES, validate_category,
+    validate_device, validate_kind, validate_label,
 };
 use crate::validation::{
     MAX_FILE_BYTES, MAX_TEXT_FILE_BYTES, ProjectInput, SecretInput, SecretUpdateInput,
@@ -891,6 +891,16 @@ impl Vault {
         self.require_unlocked()?;
         let id = validate_id(id, "secret id")?;
         self.with_database(|db| account_details::delete_account_secret(db.connection(), id))
+    }
+
+    /// The group the account is shown in; None goes back to the guessed one.
+    pub fn set_account_category(&self, account_id: i64, name: Option<&str>) -> VaultResult<()> {
+        self.require_unlocked()?;
+        let account_id = validate_id(account_id, "account id")?;
+        let name = validate_category(name)?;
+        self.with_database(|db| {
+            account_details::set_account_category(db.connection(), account_id, name.as_deref())
+        })
     }
 
     pub fn set_account_devices(&self, account_id: i64, device_ids: &[i64]) -> VaultResult<()> {
@@ -2347,6 +2357,45 @@ mod tests {
             .map(|a| a.has_password)
             .collect();
         assert_eq!(flags, [false, true, true]);
+    }
+
+    #[test]
+    fn an_account_keeps_the_group_chosen_for_it() {
+        let (_directory, vault) = unlocked_vault();
+        let domain = vault.create_domain("battle.net").unwrap();
+        let id = vault
+            .create_credential(credential(domain, "a@b.co", "x"))
+            .unwrap();
+        let category = |vault: &Vault| vault.list_accounts().unwrap().accounts[0].category.clone();
+        assert_eq!(category(&vault), None, "guessed until chosen");
+
+        vault.set_account_category(id, Some("  Games ")).unwrap();
+        assert_eq!(category(&vault).as_deref(), Some("Games"));
+        vault.set_account_category(id, Some("Money")).unwrap();
+        assert_eq!(category(&vault).as_deref(), Some("Money"));
+        vault.set_account_category(id, Some("   ")).unwrap();
+        assert_eq!(category(&vault), None, "blank goes back to the guess");
+
+        let too_long = "x".repeat(41);
+        assert_eq!(
+            vault.set_account_category(id, Some(&too_long)).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            vault.set_account_category(id + 99, Some("Games")).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+
+        vault.set_account_category(id, Some("Games")).unwrap();
+        vault.delete_credential(id).unwrap();
+        let left: i64 = vault
+            .with_database(|db| {
+                Ok(db
+                    .connection()
+                    .query_row("SELECT COUNT(*) FROM account_categories", [], |row| row.get(0))?)
+            })
+            .unwrap();
+        assert_eq!(left, 0, "the choice goes with the account");
     }
 
     /// Rehearses the pending migrations on a *copy* of a real vault and proves nothing

@@ -437,6 +437,16 @@ pub fn validate_label(value: &str) -> VaultResult<String> {
     validate_optional_text(value, "label", 200)
 }
 
+/// An account's group: None, or blank, means "guess it".
+pub fn validate_category(value: Option<&str>) -> VaultResult<Option<String>> {
+    match value {
+        Some(name) if !name.trim_matches(is_js_whitespace).is_empty() => {
+            Ok(Some(validate_name(name, "category", 40)?))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub fn validate_device(input: &DeviceInput) -> VaultResult<(String, &'static str, String)> {
     Ok((
         validate_name(&input.name, "device name", 120)?,

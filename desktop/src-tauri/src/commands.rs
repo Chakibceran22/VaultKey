@@ -559,6 +559,19 @@ pub async fn delete_account_secret(
 }
 
 #[tauri::command]
+pub async fn set_account_category(
+    app: AppHandle,
+    webview: Webview,
+    account_id: i64,
+    name: Option<String>,
+) -> VaultResult<()> {
+    run("account category", app, webview, move |vault| {
+        vault.set_account_category(account_id, name.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn set_account_devices(
     app: AppHandle,
     webview: Webview,

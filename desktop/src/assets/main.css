@@ -206,6 +206,12 @@
 }
 
 @layer components {
+  /* A list that scrolls inside a fixed panel: the scrollbar's room is kept even
+     when it doesn't scroll, so rows line up across panels. */
+  .panel-scroll {
+    scrollbar-gutter: stable;
+  }
+
   /* Frosted glass pane: translucent fill, real backdrop blur, a lit top rim. */
   .glass {
     background: var(--glass-bg);

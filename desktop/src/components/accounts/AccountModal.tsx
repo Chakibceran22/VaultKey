@@ -59,6 +59,7 @@ export function AccountModal({
       email: account.email,
       method: signInWith.length ? 'linked' : account.hasPassword ? 'password' : 'none',
       password: credential?.password ?? '',
+      category: account.category ?? '',
       signInWith,
       recoveryBy: linked('recovery'),
       deviceIds: deviceLinks.filter((l) => l.accountId === account.id).map((l) => l.deviceId)
@@ -141,6 +142,7 @@ function AccountForm({
         accounts={accounts}
         devices={devices}
         excludeId={account?.id}
+        showCategory
         autoFocus
       />
     </ModalForm>

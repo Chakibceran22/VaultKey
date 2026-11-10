@@ -67,6 +67,7 @@ export const api: VaultApi = {
   revealAccountSecret: (secretId) => call('reveal_account_secret', { secretId }),
   deleteAccountSecret: (secretId) => call('delete_account_secret', { secretId }),
   setAccountDevices: (accountId, deviceIds) => call('set_account_devices', { accountId, deviceIds }),
+  setAccountCategory: (accountId, name) => call('set_account_category', { accountId, name }),
   setAccountConnections: (accountId, { signIn, recovery, deviceIds }) =>
     call('set_account_connections', { accountId, signIn, recovery, deviceIds })
 }

@@ -229,3 +229,55 @@ export function FormLine({
     </div>
   )
 }
+
+/**
+ * One kind of connection in a record's side column: a quiet label, then each
+ * related record as a row that opens it, or a plain line when there are none.
+ */
+export function RelatedGroup({ label, items, empty }: { label: string; items: ChipItem[]; empty: string }) {
+  return (
+    <div className="px-2 py-2.5">
+      <p className="px-2 pb-1 text-[12px] font-medium text-muted-foreground">{label}</p>
+      {items.length === 0 ? (
+        <p className="px-2 pt-0.5 pb-1 text-[13px] text-muted-foreground/70">{empty}</p>
+      ) : (
+        <ul>
+          {items.map((item) => {
+            const ItemIcon = item.icon
+            return (
+              <li key={item.key}>
+                <button
+                  type="button"
+                  onClick={item.onOpen}
+                  className="group flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors duration-150 outline-none hover:bg-secondary/60 focus-visible:bg-secondary/60"
+                >
+                  {ItemIcon ? (
+                    <span
+                      aria-hidden="true"
+                      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground dark:bg-white/8"
+                    >
+                      <ItemIcon size={14} />
+                    </span>
+                  ) : (
+                    <SiteTile name={item.title} size="sm" className="size-7 rounded-lg text-[12px]" />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-medium text-heading">{item.title}</span>
+                    {item.detail && (
+                      <span className="line-clamp-2 text-[12.5px] break-words text-muted-foreground">{item.detail}</span>
+                    )}
+                  </span>
+                  <CaretRight
+                    size={11}
+                    weight="bold"
+                    className="shrink-0 text-muted-foreground/60 transition-colors group-hover:text-foreground"
+                  />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}

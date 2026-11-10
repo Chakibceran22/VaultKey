@@ -186,6 +186,22 @@ pub fn delete_device(conn: &Connection, id: i64) -> VaultResult<()> {
     )
 }
 
+// ── the group an account is shown in ────────────────────────────────────────
+
+/// Pins the account to a group, or (None) goes back to the guessed one.
+pub fn set_account_category(conn: &Connection, account_id: i64, name: Option<&str>) -> VaultResult<()> {
+    require_account(conn, account_id)?;
+    match name {
+        Some(name) => conn.execute(
+            "INSERT INTO account_categories (account_id, name, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(account_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+            params![account_id, name, now_iso()],
+        )?,
+        None => conn.execute("DELETE FROM account_categories WHERE account_id = ?1", [account_id])?,
+    };
+    Ok(())
+}
+
 // ── second steps and recovery ───────────────────────────────────────────────
 
 pub struct NewFactor<'a> {

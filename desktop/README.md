@@ -78,9 +78,9 @@ four steps:
    migration. It must still unlock and decrypt, and every original row must survive
    byte-for-byte.
 3. **`pnpm vault:rehearse`** does the same check on a copy of *your* real vault.
-   Migrations v2 (projects, services, secrets, account links) and v3 (devices, sign-in
-   steps, account secrets and notes) passed it on 2026-11-09: v1 → v3, all 66
-   original rows intact.
+   Migrations v2 (projects, services, secrets, account links), v3 (devices, sign-in
+   steps, account secrets and notes) and v4 (the group an account is shown in)
+   passed it on 2026-11-10: v1 → v4, all 66 original rows intact.
 4. Ship it. The first time the app opens the real vault, it writes an
    integrity-checked backup to `vaultkey/backups/`. Then it applies all pending
    migrations in one transaction: they all apply, or none do.
@@ -140,21 +140,30 @@ surfaces follow the elevation rules in `src/assets/main.css`:
 
 Each page follows one pattern:
 
-- **Accounts**, **Projects** and **Devices** are lists: a search field, a framed list
-  and one primary action.
-- **An account** is a detail page with Sign-in, Secrets and notes, and Connections tabs.
-- **A project** is a detail page: its name and description edit in place, with Services,
-  Secrets and Files as tabs.
+- **Accounts** is grouped: each group (Email and identity, Developer and cloud, AI,
+  Work, Money, Games…) is a panel of the same fixed size in an even grid, and a long
+  group scrolls inside its panel. The group is guessed from the website's name
+  (`src/lib/categories.ts`, which can improve without a migration) until it is set in
+  the account's form. Search filters every group; a group's name finds the group.
+- **Projects** and **Devices** are lists: a search field, a framed list and one primary
+  action, in a reading-width column.
+- **An account** and **a project** are record pages, wider than the lists so a large
+  window shows the whole record at once: everything it holds stacked in the main column
+  (an account's Sign-in, then Secrets and notes; a project's Services, Secrets, Files),
+  and beside it a column of what it connects to (what the account signs in to, recovers,
+  is signed in on and is used by; the accounts a project depends on, including the ones
+  they sign in through). Below 1024px that column moves under the main one.
+  A project's name and description edit in place.
 - **Creating and editing** happen in a centred modal, one at a time (a new device
   can be added inside the sign-in step form, never in a second modal).
 - **Deleting** always asks first, naming what is deleted and what goes with it.
 
 | Key | Action |
 |---|---|
-| ⌘K | Search everything. Every word must match, across what an account connects to ("github yubikey", "coolify acme") |
+| ⌘K | The search console: ask in your own words ("device for coolify autotransfert", "github recovery codes", "what signs in with google"). It shows how it read the question, answers first, and the path of links to each result. How it will search by meaning: [docs/graph-search.md](docs/graph-search.md) |
 | ⌘1 / ⌘2 / ⌘3 | Accounts / Projects / Devices |
 | / | Search the current list |
-| ⌘N | New account, project, device, service or secret (whatever the page holds) |
+| ⌘N | New account, project or device on its list; a new service on a project page |
 | ⌘L | Lock the vault |
 
 The app icon source is `src-tauri/icons/app-icon.svg`. Regenerate every size with

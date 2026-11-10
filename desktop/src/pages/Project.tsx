@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Tabs } from '@base-ui/react/tabs'
+import { useNavigate, useParams } from 'react-router-dom'
 import { FilePlus, Plus, Trash } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { SecretMeta, Service } from '@renderer/shared/contracts'
-import { EmptyFrame, ListFrame, Page, PageHeader } from '@renderer/components/layout/page'
+import type { AccountSummary, SecretMeta, Service } from '@renderer/shared/contracts'
+import { RelatedGroup } from '@renderer/components/accounts/parts'
+import {
+  EmptyFrame,
+  EmptyLine,
+  History,
+  ListFrame,
+  Page,
+  PageHeader,
+  RecordColumns,
+  Section,
+  useShowSection
+} from '@renderer/components/layout/page'
 import { SecretRow, ServiceRow } from '@renderer/components/projects/rows'
 import { SecretForm, ServiceForm } from '@renderer/components/projects/forms'
 import { Button } from '@renderer/components/ui/button'
@@ -14,13 +24,10 @@ import { Spinner } from '@renderer/components/ui/misc'
 import { Modal, RowMenu, RowMenuItem } from '@renderer/components/ui/overlays'
 import { plural, refreshVault, useAccounts, useRelations, useWorkspace } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
-import { isModKey, isOverlayOpen } from '@renderer/lib/dom'
+import { isModKey, isOverlayOpen, MOD } from '@renderer/lib/dom'
 import { useDropTarget } from '@renderer/lib/drop-target'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
-
-type Tab = 'services' | 'secrets' | 'files'
-const TABS: Tab[] = ['services', 'secrets', 'files']
 
 type ModalState =
   | { open: boolean; kind: 'service'; service: Service | null }
@@ -28,16 +35,14 @@ type ModalState =
 
 /**
  * Pattern: Detail / Record. One project: name and description edited in place,
- * then a tab per kind of thing it holds. Each tab owns its list, empty state
- * and primary action; adding and editing happen in a modal.
+ * then its services, secrets and files, each a section with its own action;
+ * beside them, the accounts it depends on. Adding and editing happen in a modal.
  */
 export default function ProjectPage(): React.ReactElement {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { projectId: rawId } = useParams()
   const projectId = Number(rawId)
-  const [params, setParams] = useSearchParams()
-  const tab: Tab = TABS.includes(params.get('tab') as Tab) ? (params.get('tab') as Tab) : 'services'
   const { projects, services, secrets, isLoading } = useWorkspace()
   const { accounts } = useAccounts()
   const relationsOf = useRelations()
@@ -58,7 +63,7 @@ export default function ProjectPage(): React.ReactElement {
     return () => setDropTarget(null)
   }, [project, setDropTarget])
 
-  const setTab = (next: Tab): void => setParams({ tab: next }, { replace: true })
+  useShowSection(!!project)
 
   const addFiles = async (): Promise<void> => {
     try {
@@ -66,24 +71,20 @@ export default function ProjectPage(): React.ReactElement {
       await refreshVault(queryClient)
       if (report.imported.length) toast.success(`${plural(report.imported.length, 'file')} added`)
       for (const skipped of report.skipped) toast.error(`${skipped.name}: ${skipped.reason}`)
-      setTab('files')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Couldn’t add the files')
     }
   }
 
-  const add = (which: Tab = tab): void => {
-    if (which === 'services') setModal({ open: true, kind: 'service', service: null })
-    else if (which === 'secrets') setModal({ open: true, kind: 'secret', secret: null })
-    else void addFiles()
-  }
+  const addService = (): void => setModal({ open: true, kind: 'service', service: null })
+  const addSecret = (): void => setModal({ open: true, kind: 'secret', secret: null })
 
-  // ⌘N adds to the open tab.
+  // ⌘N adds a service.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (isModKey(event) && event.key.toLowerCase() === 'n' && !isOverlayOpen()) {
         event.preventDefault()
-        add()
+        addService()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -184,15 +185,26 @@ export default function ProjectPage(): React.ReactElement {
   }
 
   const closeModal = (): void => setModal((current) => ({ ...current, open: false }))
-  const count = (n: number) => (
-    <span className="ml-1.5 text-muted-foreground tabular-nums">
-      <span className="sr-only">, </span>
-      {n}
-    </span>
-  )
+
+  // What the project depends on: the accounts its services use, then the
+  // accounts those sign in through (Vercel signs in with GitHub, say).
+  const used = new Map<number, AccountSummary>()
+  for (const service of projectServices) {
+    const account = accounts.find((a) => a.id === service.accountId)
+    if (account) used.set(account.id, account)
+  }
+  const through = new Map<number, { account: AccountSummary; for: string[] }>()
+  for (const account of used.values()) {
+    for (const via of relationsOf(account.id).signsInWith) {
+      if (used.has(via.id)) continue
+      const entry = through.get(via.id) ?? { account: via, for: [] }
+      entry.for.push(account.domainName)
+      through.set(via.id, entry)
+    }
+  }
 
   return (
-    <Page>
+    <Page wide>
       <PageHeader
         crumbs={[{ to: '/projects', label: 'Projects' }]}
         title={<InlineEdit value={project.name} label="Project name" placeholder="Name" onSave={(name) => save({ name })} />}
@@ -213,134 +225,136 @@ export default function ProjectPage(): React.ReactElement {
         }
       />
 
-      <Tabs.Root value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-8">
-        <div className="flex items-end justify-between gap-4 border-b">
-          <Tabs.List className="relative flex gap-6">
-            {(
-              [
-                ['services', 'Services', projectServices.length],
-                ['secrets', 'Secrets', textSecrets.length],
-                ['files', 'Files', files.length]
-              ] as const
-            ).map(([value, label, n]) => (
-              <Tabs.Tab
-                key={value}
-                value={value}
-                className="cursor-pointer pb-3 text-[14px] font-medium text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-heading data-active:text-heading"
-              >
-                {label}
-                {count(n)}
-              </Tabs.Tab>
-            ))}
-            <Tabs.Indicator className="absolute bottom-[-1px] left-(--active-tab-left) h-0.5 w-(--active-tab-width) rounded-full bg-primary transition-[left,width] duration-200 ease-smooth motion-reduce:transition-none" />
-          </Tabs.List>
-          <div className="pb-2">
-            {tab === 'services' && (
-              <Button size="md" onClick={() => add('services')}>
-                <Plus size={13} weight="bold" />
-                Add service
-              </Button>
-            )}
-            {tab === 'secrets' && (
-              <Button size="md" onClick={() => add('secrets')}>
-                <Plus size={13} weight="bold" />
-                Add secret
-              </Button>
-            )}
-            {tab === 'files' && (
-              <Button size="md" onClick={() => add('files')}>
-                <FilePlus size={14} />
-                Add files
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <Tabs.Panel value="services" className="mt-4 outline-none">
-          {projectServices.length === 0 ? (
-            <EmptyFrame
-              title="No services yet"
-              description="Add what this project runs on (hosting, database, email…) and the account each one uses."
+      <RecordColumns
+        main={
+          <>
+            <Section
+              id="section-services"
+              title="Services"
               action={
-                <Button variant="primary" size="lg" onClick={() => add('services')}>
-                  <Plus size={14} weight="bold" />
+                <Button size="md" onClick={addService} title={`Add service (${MOD}N)`}>
+                  <Plus size={13} weight="bold" />
                   Add service
                 </Button>
               }
-            />
-          ) : (
-            <ListFrame footer={plural(projectServices.length, 'service')}>
-              {projectServices.map((service) => {
-                const account = accounts.find((a) => a.id === service.accountId)
-                return (
-                  <ServiceRow
-                    key={service.id}
-                    service={service}
-                    account={account}
-                    relations={account ? relationsOf(account.id) : undefined}
-                    onEdit={() => setModal({ open: true, kind: 'service', service })}
-                    onDelete={() => void removeService(service)}
-                  />
-                )
-              })}
-            </ListFrame>
-          )}
-        </Tabs.Panel>
+            >
+              <ListFrame footer={projectServices.length > 0 ? plural(projectServices.length, 'service') : undefined}>
+                {projectServices.map((service) => {
+                  const account = accounts.find((a) => a.id === service.accountId)
+                  return (
+                    <ServiceRow
+                      key={service.id}
+                      service={service}
+                      account={account}
+                      relations={account ? relationsOf(account.id) : undefined}
+                      onEdit={() => setModal({ open: true, kind: 'service', service })}
+                      onDelete={() => void removeService(service)}
+                    />
+                  )
+                })}
+                {projectServices.length === 0 && (
+                  <EmptyLine title="No services yet.">
+                    Add what this project runs on (hosting, database, email…) and the account each one uses.
+                  </EmptyLine>
+                )}
+              </ListFrame>
+            </Section>
 
-        <Tabs.Panel value="secrets" className="mt-4 outline-none">
-          {textSecrets.length === 0 ? (
-            <EmptyFrame
-              title="No secrets yet"
-              description="API keys, tokens and environment variables, encrypted with your vault key."
+            <Section
+              id="section-secrets"
+              title="Secrets"
               action={
-                <Button variant="primary" size="lg" onClick={() => add('secrets')}>
-                  <Plus size={14} weight="bold" />
+                <Button size="md" onClick={addSecret}>
+                  <Plus size={13} weight="bold" />
                   Add secret
                 </Button>
               }
-            />
-          ) : (
-            <ListFrame footer={plural(textSecrets.length, 'secret')}>
-              {textSecrets.map((secret) => (
-                <SecretRow
-                  key={secret.id}
-                  secret={secret}
-                  serviceName={serviceName(secret.serviceId)}
-                  onEdit={() => setModal({ open: true, kind: 'secret', secret })}
-                  onDelete={() => void removeSecret(secret)}
-                />
-              ))}
-            </ListFrame>
-          )}
-        </Tabs.Panel>
+            >
+              <ListFrame footer={textSecrets.length > 0 ? plural(textSecrets.length, 'secret') : undefined}>
+                {textSecrets.map((secret) => (
+                  <SecretRow
+                    key={secret.id}
+                    secret={secret}
+                    serviceName={serviceName(secret.serviceId)}
+                    onEdit={() => setModal({ open: true, kind: 'secret', secret })}
+                    onDelete={() => void removeSecret(secret)}
+                  />
+                ))}
+                {textSecrets.length === 0 && (
+                  <EmptyLine title="No secrets yet.">
+                    API keys, tokens and environment variables, encrypted with your vault key.
+                  </EmptyLine>
+                )}
+              </ListFrame>
+            </Section>
 
-        <Tabs.Panel value="files" className="mt-4 outline-none">
-          {files.length === 0 ? (
-            <EmptyFrame
-              title="No files yet"
-              description="SSH keys, certificates, .env files or anything else, encrypted with your vault key. Drop files onto the window, or choose them."
+            <Section
+              id="section-files"
+              title="Files"
               action={
-                <Button variant="primary" size="lg" onClick={() => add('files')}>
-                  <FilePlus size={15} />
+                <Button size="md" onClick={() => void addFiles()}>
+                  <FilePlus size={14} />
                   Add files
                 </Button>
               }
-            />
-          ) : (
-            <ListFrame footer={<>{plural(files.length, 'file')}. Drop more onto the window to add them.</>}>
-              {files.map((secret) => (
-                <SecretRow
-                  key={secret.id}
-                  secret={secret}
-                  serviceName={serviceName(secret.serviceId)}
-                  onEdit={() => setModal({ open: true, kind: 'secret', secret })}
-                  onDelete={() => void removeSecret(secret)}
+            >
+              <ListFrame
+                footer={
+                  files.length > 0 ? <>{plural(files.length, 'file')}. Drop more onto the window to add them.</> : undefined
+                }
+              >
+                {files.map((secret) => (
+                  <SecretRow
+                    key={secret.id}
+                    secret={secret}
+                    serviceName={serviceName(secret.serviceId)}
+                    onEdit={() => setModal({ open: true, kind: 'secret', secret })}
+                    onDelete={() => void removeSecret(secret)}
+                  />
+                ))}
+                {files.length === 0 && (
+                  <EmptyLine title="No files yet.">
+                    SSH keys, certificates, .env files or anything else, encrypted with your vault key. Drop files onto
+                    the window, or choose them.
+                  </EmptyLine>
+                )}
+              </ListFrame>
+            </Section>
+          </>
+        }
+        side={
+          <>
+            <Section title="Accounts it depends on">
+              <div className="frost divide-y divide-border overflow-hidden rounded-2xl">
+                <RelatedGroup
+                  label="Used by its services"
+                  empty="No service has an account yet"
+                  items={[...used.values()].map((a) => ({
+                    key: `acc-${a.id}`,
+                    title: a.domainName,
+                    detail: a.email,
+                    onOpen: () => navigate(`/accounts/${a.id}`)
+                  }))}
                 />
-              ))}
-            </ListFrame>
-          )}
-        </Tabs.Panel>
-      </Tabs.Root>
+                <RelatedGroup
+                  label="Signed in through"
+                  empty="Each one has its own sign-in"
+                  items={[...through.values()].map(({ account, for: forNames }) => ({
+                    key: `via-${account.id}`,
+                    title: account.domainName,
+                    detail: `${account.email}, for ${forNames.join(', ')}`,
+                    onOpen: () => navigate(`/accounts/${account.id}`)
+                  }))}
+                />
+              </div>
+              <p className="mt-3 px-1 text-[12px] leading-relaxed text-muted-foreground">
+                Losing one of these locks you out of part of this project.
+              </p>
+            </Section>
+            <History createdAt={project.createdAt} updatedAt={project.updatedAt} />
+          </>
+        }
+      />
 
       <Modal
         open={modal.open}

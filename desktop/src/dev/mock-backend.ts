@@ -17,6 +17,7 @@ interface MockCredential {
   username: string | null
   email: string
   password: string
+  category?: string
 }
 
 const iso = (daysAgo: number): string => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
@@ -31,7 +32,16 @@ const domains = [
   { id: 7, name: 'google.com', createdAt: iso(200), updatedAt: iso(80) },
   { id: 8, name: 'apple.com', createdAt: iso(150), updatedAt: iso(95) },
   { id: 9, name: 'discord.com', createdAt: iso(140), updatedAt: iso(12) },
-  { id: 10, name: 'proton.me', createdAt: iso(100), updatedAt: iso(5) }
+  { id: 10, name: 'proton.me', createdAt: iso(100), updatedAt: iso(5) },
+  { id: 11, name: 'steampowered.com', createdAt: iso(400), updatedAt: iso(60) },
+  { id: 12, name: 'BattleNet.com', createdAt: iso(380), updatedAt: iso(70) },
+  { id: 13, name: 'claude.ai', createdAt: iso(50), updatedAt: iso(4) },
+  { id: 14, name: 'paypal.com', createdAt: iso(300), updatedAt: iso(30) },
+  { id: 15, name: 'revolut.com', createdAt: iso(260), updatedAt: iso(26) },
+  { id: 16, name: 'netflix.com', createdAt: iso(500), updatedAt: iso(90) },
+  { id: 17, name: 'amazon.fr', createdAt: iso(450), updatedAt: iso(15) },
+  { id: 18, name: 'auratech.com', createdAt: iso(35), updatedAt: iso(35) },
+  { id: 19, name: 'hetzner.com', createdAt: iso(42), updatedAt: iso(6) }
 ]
 
 const credentials: MockCredential[] = [
@@ -47,7 +57,16 @@ const credentials: MockCredential[] = [
   { id: 10, domainId: 8, username: null, email: 'alex@icloud.com', password: 'Ap9#Lm2!qW7e' },
   { id: 11, domainId: 9, username: 'alexd#4821', email: 'alex@example.com', password: 'Dc5!zX8@vN1m' },
   { id: 12, domainId: 10, username: null, email: 'alex@proton.me', password: 'Pr0t#9Vn!2Qx' },
-  { id: 13, domainId: 10, username: null, email: 'alex.backup@proton.me', password: 'Bk7@pR2#mL9z' }
+  { id: 13, domainId: 10, username: null, email: 'alex.backup@proton.me', password: 'Bk7@pR2#mL9z' },
+  { id: 14, domainId: 11, username: 'alexplays', email: 'alex.martin@gmail.com', password: 'St3am!kQ9#xL' },
+  { id: 15, domainId: 12, username: 'Alex#2291', email: 'alex.martin@gmail.com', password: 'Bn7#qL2!vX9p' },
+  { id: 16, domainId: 13, username: null, email: 'alex@example.com', password: '' },
+  { id: 17, domainId: 14, username: null, email: 'alex.shop@gmail.com', password: 'Pp4!mZ8#tQ2w' },
+  { id: 18, domainId: 15, username: null, email: 'alex.martin@gmail.com', password: 'Rv6@nL3#kP9s' },
+  { id: 19, domainId: 16, username: null, email: 'alex.martin@gmail.com', password: 'Nf2#xQ7!bL4m' },
+  { id: 20, domainId: 17, username: null, email: 'alex.shop@gmail.com', password: 'Am9!pW3#rT6k' },
+  { id: 21, domainId: 18, username: null, email: 'alex@example.com', password: 'Au5#tR8!cH2q', category: 'Work' },
+  { id: 22, domainId: 19, username: null, email: 'billing@example.com', password: 'Hz4!nR9#bL2t' }
 ]
 
 
@@ -152,8 +171,8 @@ function removeWhere<T>(list: T[], test: (item: T) => boolean): void {
 }
 let nextId = 100
 
-let nextDomainId = 11
-let nextCredentialId = 14
+let nextDomainId = 20
+let nextCredentialId = 23
 
 function fail(code: string, message: string): never {
   throw { code, message }
@@ -208,6 +227,7 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
               username: c.username,
               email: c.email,
               hasPassword: c.password !== '',
+              category: c.category ?? null,
               createdAt: domain.createdAt,
               updatedAt: domain.updatedAt
             }
@@ -414,6 +434,13 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       for (const id of args.recovery as number[]) links.push({ accountId, linkedAccountId: id, kind: 'recovery' })
       removeWhere(deviceLinks, (l) => l.accountId === accountId)
       for (const deviceId of args.deviceIds as number[]) deviceLinks.push({ accountId, deviceId })
+      return null
+    }
+    case 'set_account_category': {
+      const credential = credentials.find((c) => c.id === args.accountId)
+      if (!credential) fail('NOT_FOUND', 'Account not found.')
+      const name = typeof args.name === 'string' ? args.name.trim() : ''
+      credential.category = name || undefined
       return null
     }
     case 'set_account_devices': {

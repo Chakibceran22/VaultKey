@@ -14,7 +14,7 @@ import { useDropTarget } from '@renderer/lib/drop-target'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
 import { cn } from '@renderer/lib/utils'
-import { CommandPalette } from './CommandPalette'
+import { SearchConsole } from '@renderer/components/search/SearchConsole'
 import { ThemeToggle } from './ThemeToggle'
 
 const SECTIONS = [
@@ -98,7 +98,7 @@ export function AppFrame() {
         await refreshVault(queryClient)
         if (report.imported.length) {
           toast.success(`${plural(report.imported.length, 'file')} added to ${target.name}`)
-          navigate(`/projects/${target.projectId}?tab=files`, { replace: true })
+          navigate(`/projects/${target.projectId}?show=files`, { replace: true })
         }
         for (const skipped of report.skipped) toast.error(`${skipped.name}: ${skipped.reason}`)
       } catch (error) {
@@ -158,7 +158,7 @@ export function AppFrame() {
         <Outlet />
       </main>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <SearchConsole open={paletteOpen} onOpenChange={setPaletteOpen} />
 
       <AnimatePresence>
         {dragging > 0 && (
