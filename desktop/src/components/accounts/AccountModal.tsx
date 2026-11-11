@@ -57,7 +57,8 @@ export function AccountModal({
       website: account.domainName,
       username: account.username ?? '',
       email: account.email,
-      method: signInWith.length ? 'linked' : account.hasPassword ? 'password' : 'none',
+      // A saved password comes first: opening as "Another account" would save it as none.
+      method: account.hasPassword ? 'password' : signInWith.length ? 'linked' : 'none',
       password: credential?.password ?? '',
       category: account.category ?? '',
       signInWith,

@@ -22,6 +22,9 @@ use crate::vault::{
     AccountList, Created, CredentialList, DomainList, ImportReport, LinkList, RevealedSecret,
     StagedList, UnlockResult, Vault, VaultStatus,
 };
+use crate::dotenv::{self, EnvFile, EnvText};
+use crate::validation::EnvSecretInput;
+use crate::vault::EnvImportReport;
 use crate::workspace::Workspace;
 
 pub const MAIN_WINDOW: &str = "main";
@@ -238,6 +241,19 @@ pub async fn update_service(
     .await
 }
 
+/// A service login's password, to copy or show.
+#[tauri::command]
+pub async fn reveal_service_login(
+    app: AppHandle,
+    webview: Webview,
+    login_id: i64,
+) -> VaultResult<RevealedSecret> {
+    run("service login reveal", app, webview, move |vault| {
+        vault.reveal_service_login(login_id)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn delete_service(app: AppHandle, webview: Webview, service_id: i64) -> VaultResult<()> {
     run("service deletion", app, webview, move |vault| {
@@ -353,6 +369,57 @@ pub async fn import_staged_files(
     run("file import", app, webview, move |vault| {
         vault.require_project(project_id)?;
         vault.import_staged(project_id, service_id, &files)
+    })
+    .await
+}
+
+/// The secrets in pasted or read .env text, for the import dialog to show. Saves nothing.
+#[tauri::command]
+pub async fn parse_env(app: AppHandle, webview: Webview, text: String) -> VaultResult<EnvFile> {
+    let text = Zeroizing::new(text);
+    run("env reading", app, webview, move |vault| {
+        vault.require_unlocked()?;
+        Ok(dotenv::parse(&text))
+    })
+    .await
+}
+
+/// The native picker for a .env file (from Rust, so the page never supplies a path).
+#[tauri::command]
+pub async fn pick_env_file(app: AppHandle, webview: Webview) -> VaultResult<Option<EnvText>> {
+    let dialogs = app.clone();
+    run("env file pick", app, webview, move |vault| {
+        vault.require_unlocked()?;
+        let picked = dialogs
+            .dialog()
+            .file()
+            .set_title("Choose a .env file")
+            .blocking_pick_file();
+        match picked.and_then(|path| path.into_path().ok()) {
+            Some(path) => dotenv::read_text(&path).map(Some),
+            None => Ok(None),
+        }
+    })
+    .await
+}
+
+/// A file dropped onto the .env import dialog, read as text instead of uploaded.
+#[tauri::command]
+pub async fn read_staged_env(app: AppHandle, webview: Webview, token: i64) -> VaultResult<EnvText> {
+    run("env file drop", app, webview, move |vault| vault.read_staged_env(token)).await
+}
+
+/// Saves the secrets chosen in the .env import dialog, all or none.
+#[tauri::command]
+pub async fn import_env(
+    app: AppHandle,
+    webview: Webview,
+    project_id: i64,
+    service_id: Option<i64>,
+    secrets: Vec<EnvSecretInput>,
+) -> VaultResult<EnvImportReport> {
+    run("env import", app, webview, move |vault| {
+        vault.import_env(project_id, service_id, secrets)
     })
     .await
 }

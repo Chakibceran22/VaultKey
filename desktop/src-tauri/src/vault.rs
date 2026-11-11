@@ -37,7 +37,10 @@ use crate::validation::{
     DeviceLinkInput, MAX_DESCRIPTION, MAX_DEVICE_NOTE, StagedFileInput, validate_file_name,
     validate_optional_text,
 };
-use crate::workspace::{self, AccountLink, NewSecret, Sealed, Workspace};
+use crate::dotenv::{self, EnvText};
+use crate::validation::{EnvSecretInput, MAX_ENV_SECRETS};
+use crate::workspace::{self, AccountLink, NewSecret, Sealed, SealedLogin, SealedService, Workspace};
+use crate::validation::validate_service_logins;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -136,6 +139,13 @@ pub struct StagedView {
 }
 
 /// The upload dialog's files, and those just refused (a folder, too large…).
+/// What a .env import saved.
+#[derive(Debug, Serialize)]
+pub struct EnvImportReport {
+    pub added: usize,
+    pub updated: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StagedList {
     pub files: Vec<StagedView>,
@@ -527,27 +537,53 @@ impl Vault {
     }
 
     /// The service's accounts as `(id, sealed role)`.
-    fn seal_service(input: &ServiceInput, key: &SecretKey) -> VaultResult<(String, String, Vec<(i64, Sealed)>)> {
+    fn seal_service(input: &ServiceInput, key: &SecretKey) -> VaultResult<SealedService> {
         let (name, url, accounts) = validate_service(input)?;
         let accounts = accounts
             .iter()
             .map(|(id, role)| Ok((*id, seal_note(role, key)?)))
             .collect::<VaultResult<_>>()?;
-        Ok((name, url, accounts))
+        let logins = validate_service_logins(&input.logins)?
+            .into_iter()
+            .map(|login| {
+                let password = match login.password {
+                    // A new login without a password keeps none.
+                    None if login.id.is_none() => Some(None),
+                    None => None,
+                    Some(password) => Some(seal_note(password, key)?),
+                };
+                Ok(SealedLogin {
+                    id: login.id,
+                    username: crypto::encrypt_bytes(login.username.as_bytes(), key)?,
+                    password,
+                    note: seal_note(&login.note, key)?,
+                })
+            })
+            .collect::<VaultResult<_>>()?;
+        Ok(SealedService { name, url, accounts, logins })
     }
 
     pub fn create_service(&self, project_id: i64, input: &ServiceInput) -> VaultResult<i64> {
         let key = self.session_key()?;
         let project_id = validate_id(project_id, "project id")?;
-        let (name, url, accounts) = Self::seal_service(input, &key)?;
-        self.with_database(|db| workspace::create_service(db, project_id, &name, &url, &accounts))
+        let service = Self::seal_service(input, &key)?;
+        self.with_database(|db| workspace::create_service(db, project_id, &service))
     }
 
     pub fn update_service(&self, id: i64, input: &ServiceInput) -> VaultResult<()> {
         let key = self.session_key()?;
         let id = validate_id(id, "service id")?;
-        let (name, url, accounts) = Self::seal_service(input, &key)?;
-        self.with_database(|db| workspace::update_service(db, id, &name, &url, &accounts))
+        let service = Self::seal_service(input, &key)?;
+        self.with_database(|db| workspace::update_service(db, id, &service))
+    }
+
+    /// A service login's password, decrypted to be copied or shown.
+    pub fn reveal_service_login(&self, id: i64) -> VaultResult<RevealedSecret> {
+        let key = self.session_key()?;
+        let id = validate_id(id, "login id")?;
+        let sealed = self.with_database(|db| workspace::service_login_password(db.connection(), id))?;
+        let sealed = sealed.ok_or_else(|| VaultError::not_found("This login has no password."))?;
+        utf8(crypto::decrypt_bytes(&sealed, &key)?)
     }
 
     pub fn delete_service(&self, id: i64) -> VaultResult<()> {
@@ -581,6 +617,69 @@ impl Vault {
                 },
             )
         })
+    }
+
+    /// Secrets read from a .env file, saved together (all or none): each one added to
+    /// the project (and to the service, if one is chosen), or the new value and
+    /// description of the existing text secret it replaces.
+    pub fn import_env(
+        &self,
+        project_id: i64,
+        service_id: Option<i64>,
+        entries: Vec<EnvSecretInput>,
+    ) -> VaultResult<EnvImportReport> {
+        let key = self.session_key()?;
+        let project_id = validate_id(project_id, "project id")?;
+        let service_id = validate_optional_id(service_id, "service id")?;
+        if entries.is_empty() {
+            return Err(VaultError::invalid_input("Choose at least one secret to import."));
+        }
+        if entries.len() > MAX_ENV_SECRETS {
+            return Err(VaultError::invalid_input(format!(
+                "Import at most {MAX_ENV_SECRETS} secrets at once."
+            )));
+        }
+        let secrets = entries
+            .into_iter()
+            .map(|entry| {
+                let value = Zeroizing::new(entry.value);
+                let name = validate_name(&entry.name, "name", 200)?;
+                if value.is_empty() {
+                    return Err(VaultError::invalid_input(format!("{name} has no value.")));
+                }
+                if value.len() > MAX_SECRET_TEXT_BYTES {
+                    return Err(VaultError::invalid_input(format!(
+                        "{name} is longer than 64 KB. Add it as a file instead."
+                    )));
+                }
+                let description =
+                    validate_optional_text(&entry.description, "description", MAX_DESCRIPTION)?;
+                Ok(workspace::EnvSecret {
+                    size: value.len() as i64,
+                    payload: crypto::encrypt_bytes(value.as_bytes(), &key)?,
+                    description: seal_note(&description, &key)?,
+                    replace: validate_optional_id(entry.replace, "secret id")?,
+                    name,
+                })
+            })
+            .collect::<VaultResult<Vec<_>>>()?;
+        let (added, updated) =
+            self.with_database(|db| workspace::import_env(db, project_id, service_id, &secrets))?;
+        Ok(EnvImportReport { added, updated })
+    }
+
+    /// The text of a file dropped onto the .env import dialog. It is read, not
+    /// uploaded, so the upload list is emptied.
+    pub fn read_staged_env(&self, token: i64) -> VaultResult<EnvText> {
+        self.require_unlocked()?;
+        let path = {
+            let mut staged = lock_or_recover(&self.staged);
+            let path = staged.files.iter().find(|f| f.token == token).map(|f| f.path.clone());
+            staged.files.clear();
+            path
+        };
+        let path = path.ok_or_else(|| VaultError::invalid_input("That file is no longer there. Drop it again."))?;
+        dotenv::read_text(&path)
     }
 
     pub fn update_secret(&self, id: i64, input: SecretUpdateInput) -> VaultResult<()> {
@@ -1860,6 +1959,107 @@ mod tests {
     }
 
     #[test]
+    fn service_logins_are_sealed_kept_and_replaced() {
+        use crate::validation::ServiceLoginInput;
+        let (directory, vault) = unlocked_vault();
+        let shop = project(&vault, "Shaba");
+        let login = |id: Option<i64>, username: &str, password: Option<&str>, note: &str| ServiceLoginInput {
+            id,
+            username: username.into(),
+            password: password.map(Into::into),
+            note: note.into(),
+        };
+        let input = |logins: Vec<ServiceLoginInput>| ServiceInput {
+            name: "Prod server".into(),
+            url: "203.0.113.7:22".into(),
+            accounts: Vec::new(),
+            logins,
+        };
+        let server = vault
+            .create_service(shop, &input(vec![login(None, " root ", Some("hunter2"), "full access"), login(None, "deploy", None, "")]))
+            .unwrap();
+        let logins = || vault.workspace().unwrap().services.into_iter().find(|s| s.id == server).unwrap().logins;
+        let shape = |logins: &[workspace::ServiceLogin]| -> Vec<(String, String, bool)> {
+            logins.iter().map(|l| (l.username.clone(), l.note.clone(), l.has_password)).collect()
+        };
+        let saved = logins();
+        assert_eq!(shape(&saved), [("root".into(), "full access".into(), true), ("deploy".into(), String::new(), false)]);
+        assert_eq!(vault.reveal_service_login(saved[0].id).unwrap().value, "hunter2");
+        assert_eq!(code(vault.reveal_service_login(saved[1].id)), ErrorCode::NotFound);
+
+        // Nothing of it is readable in the file.
+        let conn = Connection::open(directory.path().join("vaultkey.sqlite3")).unwrap();
+        let (username, password, note): (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = conn
+            .query_row("SELECT username, password, note FROM service_logins WHERE id = ?1", [saved[0].id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        let raw = [username, password.unwrap(), note.unwrap()].concat();
+        for plain in [&b"root"[..], b"hunter2", b"full access"] {
+            assert!(!raw.windows(plain.len()).any(|w| w == plain), "{} is stored in clear", String::from_utf8_lossy(plain));
+        }
+
+        // Kept without re-sending its password; one removed, one added; the order is the list's.
+        let root = saved[0].id;
+        vault
+            .update_service(server, &input(vec![login(None, "backup", Some("b4ckup"), ""), login(Some(root), "root", None, "sudo")]))
+            .unwrap();
+        let updated = logins();
+        assert_eq!(shape(&updated), [("backup".into(), String::new(), true), ("root".into(), "sudo".into(), true)]);
+        assert_eq!(updated[1].id, root);
+        assert_eq!(vault.reveal_service_login(root).unwrap().value, "hunter2");
+
+        // An empty password clears it; another service's login can't be claimed.
+        vault.update_service(server, &input(vec![login(Some(root), "root", Some(""), "")])).unwrap();
+        assert!(!logins()[0].has_password);
+        assert_eq!(code(vault.update_service(server, &input(vec![login(Some(root + 99), "x", None, "")]))), ErrorCode::NotFound);
+        assert_eq!(code(vault.update_service(server, &input(vec![login(None, "  ", None, "")]))), ErrorCode::InvalidInput);
+
+        // Deleting the service deletes its logins.
+        vault.delete_service(server).unwrap();
+        let left: i64 = conn.query_row("SELECT COUNT(*) FROM service_logins", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn env_import_adds_replaces_and_rolls_back() {
+        let (_directory, vault) = unlocked_vault();
+        let shop = project(&vault, "Shaba");
+        let old = vault
+            .create_text_secret(shop, SecretInput { name: "DATABASE_URL".into(), value: "postgres://old".into(), service_id: None, description: "old db".into() })
+            .unwrap();
+        let file = dotenv::parse("DATABASE_URL=postgres://new # production db\nSTRIPE_KEY=sk_live_1 # live payments\n");
+        let chosen = |replace: Option<i64>| -> Vec<EnvSecretInput> {
+            file.entries
+                .iter()
+                .map(|e| EnvSecretInput {
+                    name: e.name.clone(),
+                    value: e.value.clone(),
+                    description: e.comment.clone(),
+                    replace: (e.name == "DATABASE_URL").then_some(replace).flatten(),
+                })
+                .collect()
+        };
+
+        // A replaced secret that no longer matches: nothing at all is saved.
+        assert_eq!(code(vault.import_env(shop, None, chosen(Some(old + 100)))), ErrorCode::NotFound);
+        assert_eq!(vault.workspace().unwrap().secrets.len(), 1);
+
+        let report = vault.import_env(shop, None, chosen(Some(old))).unwrap();
+        assert_eq!((report.added, report.updated), (1, 1));
+        let secrets = vault.workspace().unwrap().secrets;
+        let by_name = |name: &str| secrets.iter().find(|s| s.name == name).unwrap();
+        assert_eq!(by_name("DATABASE_URL").id, old);
+        assert_eq!(by_name("DATABASE_URL").description, "production db");
+        assert_eq!(vault.reveal_secret(old).unwrap().value, "postgres://new");
+        let stripe = by_name("STRIPE_KEY");
+        assert_eq!((stripe.description.as_str(), stripe.kind.as_str()), ("live payments", "text"));
+        assert_eq!(vault.reveal_secret(stripe.id).unwrap().value, "sk_live_1");
+
+        assert_eq!(code(vault.import_env(shop, None, Vec::new())), ErrorCode::InvalidInput);
+    }
+
+    #[test]
     fn projects_services_and_text_secrets_round_trip() {
         let (_directory, vault) = unlocked_vault();
         let google = account(&vault, "google.com", "me@gmail.com");
@@ -1890,6 +2090,7 @@ mod tests {
             .create_service(
                 acme,
                 &ServiceInput {
+                    logins: Vec::new(),
                     name: "Coolify".into(),
                     url: "https://coolify.acme.dev".into(),
                     accounts: vec![ServiceAccountInput {
@@ -1903,6 +2104,7 @@ mod tests {
             code(vault.create_service(
                 acme,
                 &ServiceInput {
+                    logins: Vec::new(),
                     name: "Coolify".into(),
                     url: String::new(),
                     accounts: Vec::new()
@@ -1914,6 +2116,7 @@ mod tests {
             code(vault.create_service(
                 acme,
                 &ServiceInput {
+                    logins: Vec::new(),
                     name: "Ghost".into(),
                     url: String::new(),
                     accounts: vec![ServiceAccountInput {
@@ -2020,6 +2223,7 @@ mod tests {
             .create_service(
                 other,
                 &ServiceInput {
+                    logins: Vec::new(),
                     name: "Vercel".into(),
                     url: String::new(),
                     accounts: Vec::new(),
@@ -2664,6 +2868,7 @@ mod tests {
         let admin = account(&vault, "coolify.acme.dev", "admin@acme.dev");
         let deploy = account(&vault, "coolify.acme.dev", "deploy@acme.dev");
         let input = |accounts: Vec<ServiceAccountInput>| ServiceInput {
+            logins: Vec::new(),
             name: "Coolify".into(),
             url: String::new(),
             accounts,

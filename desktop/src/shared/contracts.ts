@@ -87,14 +87,27 @@ export interface ServiceAccount {
   role: string
 }
 
-/** A service a project uses, signed into with some of the vault's accounts. */
+/** A login a service keeps itself (a private server's root user): never its password. */
+export interface ServiceLogin {
+  id: number
+  /** Stored encrypted, like the note. */
+  username: string
+  /** "root", "read-only"…; empty for none. */
+  note: string
+  hasPassword: boolean
+}
+
+/** A service a project uses: the vault's accounts it signs in with, and its own logins. */
 export interface Service {
   id: number
   projectId: number
   name: string
+  /** A URL, a hostname or an IP. */
   url: string
   /** In order; the first is the main one. */
   accounts: ServiceAccount[]
+  /** For what has no account in the vault, in order. */
+  logins: ServiceLogin[]
   createdAt: string
   updatedAt: string
 }
@@ -242,10 +255,20 @@ export interface ProjectInput {
   description?: string
 }
 
+/** `id`: a saved login, kept. `password`: absent keeps a saved one; empty clears it. */
+export interface ServiceLoginInput {
+  id?: number
+  username: string
+  password?: string
+  note: string
+}
+
 export interface ServiceInput {
   name: string
   url?: string
   accounts?: ServiceAccount[]
+  /** All of its logins: the ones left out are removed. */
+  logins?: ServiceLoginInput[]
 }
 
 export interface SecretInput {
@@ -281,6 +304,33 @@ export interface ImportReport {
   skipped: { name: string; reason: string }[]
 }
 
+/** One NAME=value line of a .env file; the comment on its line is its description. */
+export interface EnvEntry {
+  line: number
+  name: string
+  value: string
+  comment: string
+}
+
+/** A .env file as read: its secrets, and the lines that give none (with why). */
+export interface EnvFile {
+  entries: EnvEntry[]
+  skipped: { line: number; reason: string }[]
+}
+
+export interface EnvText {
+  name: string
+  text: string
+}
+
+/** A secret to save from a .env: added, or (`replace`) the new value of that secret. */
+export interface EnvSecretInput {
+  name: string
+  value: string
+  description: string
+  replace: number | null
+}
+
 export interface VaultApi {
   getVaultStatus: () => Promise<IpcResult<VaultStatusResponse>>
   createVault: (masterPassword: string) => Promise<IpcResult<void>>
@@ -301,6 +351,7 @@ export interface VaultApi {
   createService: (projectId: number, input: ServiceInput) => Promise<IpcResult<{ id: number }>>
   updateService: (serviceId: number, input: ServiceInput) => Promise<IpcResult<void>>
   deleteService: (serviceId: number) => Promise<IpcResult<void>>
+  revealServiceLogin: (loginId: number) => Promise<IpcResult<{ value: string }>>
   createSecret: (projectId: number, input: SecretInput) => Promise<IpcResult<{ id: number }>>
   updateSecret: (secretId: number, input: SecretUpdateInput) => Promise<IpcResult<void>>
   revealSecret: (secretId: number) => Promise<IpcResult<{ value: string }>>
@@ -317,6 +368,15 @@ export interface VaultApi {
     files: { token: number; name: string; description: string }[]
   ) => Promise<IpcResult<ImportReport>>
   exportSecret: (secretId: number) => Promise<IpcResult<{ saved: boolean }>>
+  /** The .env import: read pasted text, pick a file, read a dropped one, save the chosen secrets (all or none). */
+  parseEnv: (text: string) => Promise<IpcResult<EnvFile>>
+  pickEnvFile: () => Promise<IpcResult<EnvText | null>>
+  readStagedEnv: (token: number) => Promise<IpcResult<EnvText>>
+  importEnv: (
+    projectId: number,
+    serviceId: number | null,
+    secrets: EnvSecretInput[]
+  ) => Promise<IpcResult<{ added: number; updated: number }>>
   listAccountLinks: () => Promise<IpcResult<{ links: AccountLink[] }>>
   setSignInLinks: (accountId: number, linkedAccountIds: number[]) => Promise<IpcResult<void>>
   setAccountLinks: (accountId: number, kind: LinkKind, linkedAccountIds: number[]) => Promise<IpcResult<void>>

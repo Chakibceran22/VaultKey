@@ -114,6 +114,18 @@ pub struct Service {
     /// Its one account, before v5 (snapshots and fixtures written then).
     #[serde(default)]
     pub account_id: Option<i64>,
+    /// Its own logins (schema v6): a server's root user. Never a password.
+    #[serde(default)]
+    pub logins: Vec<ServiceLogin>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceLogin {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

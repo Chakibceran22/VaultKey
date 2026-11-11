@@ -147,6 +147,21 @@ export function AccountFields({
               </IconButton>
             </div>
             {draft.password && <StrengthMeter password={draft.password} />}
+            {/* A password and "Sign in with Google" too, as GitHub often has. */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[13px] font-medium text-heading">Also signs in with</span>
+                <span className="text-[12px] text-muted-foreground">Optional</span>
+              </div>
+              <AccountPicker
+                accounts={accounts}
+                selected={draft.signInWith}
+                onChange={(ids) => set('signInWith', ids)}
+                multiple
+                excludeId={excludeId}
+                placeholder="Google, GitHub… if it has “Sign in with” too"
+              />
+            </div>
           </div>
         ) : draft.method === 'linked' ? (
           <div className="space-y-1.5">

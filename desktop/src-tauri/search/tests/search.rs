@@ -44,6 +44,23 @@ fn finds_by_words_and_links() {
 }
 
 #[test]
+fn finds_a_server_by_its_own_login() {
+    let vault: Vault = serde_json::from_value(serde_json::json!({
+        "projects": [{ "id": 1, "name": "Shaba", "description": "" }],
+        "services": [
+            { "id": 1, "projectId": 1, "name": "Prod server", "url": "203.0.113.7:22",
+              "logins": [{ "username": "root", "note": "full access" }, { "username": "deploy", "note": "" }] },
+            { "id": 2, "projectId": 1, "name": "Vercel", "url": "https://vercel.com" }
+        ]
+    }))
+    .unwrap();
+    let index = Index::new(&vault);
+    for query in ["root", "deploy", "203.0.113.7", "full access"] {
+        assert_eq!(first(&index, query, None, &words_only()), "service:1", "{query}");
+    }
+}
+
+#[test]
 fn keeps_the_console_contract() {
     let index = Index::new(&vault());
     let (response, _) = search(&index, "device authentication for coolify lumenpost", None, &words_only()).unwrap();

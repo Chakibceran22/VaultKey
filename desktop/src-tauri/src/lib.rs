@@ -4,6 +4,7 @@ mod account_details;
 mod commands;
 mod crypto;
 mod db;
+mod dotenv;
 mod error;
 mod paths;
 mod store;
@@ -233,6 +234,11 @@ pub fn run() {
             commands::unstage_file,
             commands::clear_staged_files,
             commands::import_staged_files,
+            commands::parse_env,
+            commands::pick_env_file,
+            commands::read_staged_env,
+            commands::import_env,
+            commands::reveal_service_login,
             commands::export_secret,
             commands::list_account_links,
             commands::set_sign_in_links,

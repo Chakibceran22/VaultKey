@@ -1,16 +1,18 @@
 import { useState } from 'react'
+import { Eye, EyeSlash, Plus, X } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { SecretMeta, Service } from '@renderer/shared/contracts'
 import { AccountFields } from '@renderer/components/accounts/AccountFields'
 import { AccountPicker, Select, Textarea } from '@renderer/components/ui/controls'
 import { Button } from '@renderer/components/ui/button'
+import { IconButton } from '@renderer/components/ui/icon-button'
 import { Field, Input } from '@renderer/components/ui/input'
 import { ModalForm } from '@renderer/components/ui/modal-form'
 import { hostOf, refreshVault, useAccounts, useDomains } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
-import { emptyAccountDraft, saveService, type ServiceDraft } from '@renderer/lib/vault-actions'
+import { emptyAccountDraft, saveService, type LoginDraft, type ServiceDraft } from '@renderer/lib/vault-actions'
 
 export function ProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (id: number) => void }) {
   const queryClient = useQueryClient()
@@ -63,6 +65,14 @@ export function ServiceForm({
     name: service?.name ?? '',
     url: service?.url ?? '',
     accounts: service?.accounts ?? [],
+    logins: (service?.logins ?? []).map((l) => ({
+      key: `login-${l.id}`,
+      id: l.id,
+      username: l.username,
+      password: '',
+      hasPassword: l.hasPassword,
+      note: l.note
+    })),
     creating: false,
     newAccount: emptyAccountDraft(hostOf(service?.url ?? '')),
     newRole: ''
@@ -94,11 +104,11 @@ export function ServiceForm({
           <Input id={id} placeholder="Coolify" value={draft.name} onChange={(e) => set('name', e.target.value)} autoFocus required />
         )}
       </Field>
-      <Field label="URL" hint="Optional">
+      <Field label="Address" hint="Optional: a URL, hostname or IP">
         {(id) => (
           <Input
             id={id}
-            placeholder="https://coolify.acme.dev"
+            placeholder="https://coolify.acme.dev or 203.0.113.7:22"
             value={draft.url}
             onChange={(e) => {
               const url = e.target.value
@@ -171,7 +181,97 @@ export function ServiceForm({
           </Field>
         </>
       )}
+      <LoginsEditor logins={draft.logins} onChange={(logins) => set('logins', logins)} />
     </ModalForm>
+  )
+}
+
+/**
+ * The service's own logins, for what has no account in the vault (a private server's
+ * root user, a database user): a username, a password and a note each. A saved
+ * password is never shown here; typing a new one replaces it.
+ */
+function LoginsEditor({ logins, onChange }: { logins: LoginDraft[]; onChange: (logins: LoginDraft[]) => void }) {
+  const [shown, setShown] = useState<Set<string>>(new Set())
+  const update = (key: string, patch: Partial<LoginDraft>): void =>
+    onChange(logins.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  const toggleShown = (key: string): void =>
+    setShown((current) => {
+      const next = new Set(current)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const add = (): void =>
+    onChange([...logins, { key: crypto.randomUUID(), id: null, username: '', password: '', hasPassword: false, note: '' }])
+
+  return (
+    <div className="space-y-2.5 border-t pt-5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[13px] font-medium text-heading">Logins</span>
+        <Button variant="ghost" size="sm" onClick={add}>
+          <Plus size={12} weight="bold" />
+          Add login
+        </Button>
+      </div>
+      {logins.length === 0 && (
+        <p className="text-[13px] text-muted-foreground">
+          For what has no account in the vault: a server’s root user, a database user.
+        </p>
+      )}
+      {logins.map((login, i) => {
+        const which = login.username.trim() || `login ${i + 1}`
+        const visible = shown.has(login.key)
+        return (
+          <div key={login.key} className="frost space-y-2 rounded-lg p-2">
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label={`Username of ${which}`}
+                placeholder="Username"
+                value={login.username}
+                maxLength={200}
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus={login.id === null && !login.username}
+                onChange={(e) => update(login.key, { username: e.target.value })}
+                className="h-8 min-w-0 flex-1 font-mono text-[13px]"
+              />
+              <div className="relative min-w-0 flex-1">
+                <Input
+                  type={visible ? 'text' : 'password'}
+                  aria-label={`Password of ${which}`}
+                  placeholder={login.hasPassword ? 'Saved' : 'Password'}
+                  title={login.hasPassword ? 'Saved. Type a new one to replace it.' : 'Optional: none for an SSH-key-only user'}
+                  value={login.password}
+                  spellCheck={false}
+                  autoComplete="new-password"
+                  onChange={(e) => update(login.key, { password: e.target.value })}
+                  className="h-8 pr-9 font-mono text-[13px]"
+                />
+                <IconButton
+                  label={visible ? 'Hide password' : 'Show password'}
+                  size="icon-sm"
+                  className="absolute top-0.5 right-0.5 size-7"
+                  onClick={() => toggleShown(login.key)}
+                >
+                  {visible ? <EyeSlash size={14} /> : <Eye size={14} />}
+                </IconButton>
+              </div>
+              <IconButton label={`Remove ${which}`} size="icon-sm" onClick={() => onChange(logins.filter((l) => l.key !== login.key))}>
+                <X size={13} />
+              </IconButton>
+            </div>
+            <Input
+              aria-label={`Note for ${which}`}
+              placeholder="What it’s for: full access, read-only…"
+              value={login.note}
+              maxLength={200}
+              onChange={(e) => update(login.key, { note: e.target.value })}
+              className="h-8 text-[13px]"
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

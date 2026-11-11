@@ -37,15 +37,30 @@ pub struct ServiceAccount {
     pub role: String,
 }
 
+/// A login the service keeps itself (a server's user): never its password.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceLogin {
+    pub id: i64,
+    /// Stored sealed.
+    pub username: String,
+    /// "root", "read-only"…; empty for none. Stored sealed.
+    pub note: String,
+    pub has_password: bool,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
     pub id: i64,
     pub project_id: i64,
     pub name: String,
+    /// A URL, a hostname or an IP: its address.
     pub url: String,
     /// In order; the first is the main one.
     pub accounts: Vec<ServiceAccount>,
+    /// Its own logins, in order.
+    pub logins: Vec<ServiceLogin>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -128,6 +143,22 @@ pub fn load_workspace(conn: &Connection, open: Open<'_>) -> VaultResult<Workspac
             role: open(role)?,
         });
     }
+    let mut logins: HashMap<i64, Vec<ServiceLogin>> = HashMap::new();
+    let rows: Vec<(i64, i64, Vec<u8>, Sealed, bool)> = conn
+        .prepare_cached(
+            "SELECT id, service_id, username, note, password IS NOT NULL FROM service_logins
+             ORDER BY service_id, position, id",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, service_id, username, note, has_password) in rows {
+        logins.entry(service_id).or_default().push(ServiceLogin {
+            id,
+            username: open(Some(username))?,
+            note: open(note)?,
+            has_password,
+        });
+    }
     let services = conn
         .prepare_cached(
             "SELECT id, project_id, name, url, created_at, updated_at
@@ -140,6 +171,7 @@ pub fn load_workspace(conn: &Connection, open: Open<'_>) -> VaultResult<Workspac
                 name: row.get(2)?,
                 url: row.get(3)?,
                 accounts: Vec::new(),
+                logins: Vec::new(),
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
             })
@@ -148,6 +180,7 @@ pub fn load_workspace(conn: &Connection, open: Open<'_>) -> VaultResult<Workspac
         .into_iter()
         .map(|mut service| {
             service.accounts = accounts.remove(&service.id).unwrap_or_default();
+            service.logins = logins.remove(&service.id).unwrap_or_default();
             service
         })
         .collect();
@@ -305,14 +338,71 @@ fn replace_service_accounts(
     Ok(())
 }
 
-/// The accounts are `(account id, sealed role)`, distinct, in order.
-pub fn create_service(
-    database: &mut VaultDatabase,
-    project_id: i64,
-    name: &str,
-    url: &str,
-    accounts: &[(i64, Sealed)],
-) -> VaultResult<i64> {
+/// A login as written: sealed username and note; `password` None keeps the stored one
+/// (a new login has none), `Some(None)` clears it.
+pub struct SealedLogin {
+    pub id: Option<i64>,
+    pub username: Vec<u8>,
+    pub password: Option<Sealed>,
+    pub note: Sealed,
+}
+
+/// A service as written: its accounts `(account id, sealed role)`, distinct, in order,
+/// and its own logins, in order.
+pub struct SealedService {
+    pub name: String,
+    pub url: String,
+    pub accounts: Vec<(i64, Sealed)>,
+    pub logins: Vec<SealedLogin>,
+}
+
+/// Inside a transaction: the service's logins become exactly `logins`, in order. Those
+/// with an id are updated (they must be this service's), the others added, and the
+/// ones left out removed.
+fn replace_service_logins(tx: &Connection, service_id: i64, logins: &[SealedLogin], now: &str) -> VaultResult<()> {
+    let existing: Vec<i64> = tx
+        .prepare_cached("SELECT id FROM service_logins WHERE service_id = ?1")?
+        .query_map([service_id], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    if logins.iter().filter_map(|l| l.id).any(|id| !existing.contains(&id)) {
+        return Err(VaultError::not_found("A login of this service was removed meanwhile. Open the service again."));
+    }
+    for id in existing.iter().filter(|id| !logins.iter().any(|l| l.id == Some(**id))) {
+        tx.execute("DELETE FROM service_logins WHERE id = ?1", [id])?;
+    }
+    for (position, login) in logins.iter().enumerate() {
+        let position = position as i64;
+        match login.id {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE service_logins SET username = ?1, note = ?2, position = ?3, updated_at = ?4 WHERE id = ?5",
+                    params![login.username, login.note, position, now, id],
+                )?;
+                if let Some(password) = &login.password {
+                    tx.execute("UPDATE service_logins SET password = ?1 WHERE id = ?2", params![password, id])?;
+                }
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO service_logins (service_id, username, password, note, position, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    params![service_id, login.username, login.password.clone().flatten(), login.note, position, now],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A login's sealed password, or None when it keeps none.
+pub fn service_login_password(conn: &Connection, id: i64) -> VaultResult<Sealed> {
+    conn.query_row("SELECT password FROM service_logins WHERE id = ?1", [id], |row| row.get(0))
+        .optional()?
+        .ok_or_else(|| VaultError::not_found("Login not found."))
+}
+
+pub fn create_service(database: &mut VaultDatabase, project_id: i64, service: &SealedService) -> VaultResult<i64> {
+    let SealedService { name, url, accounts, logins } = service;
     let now = now_iso();
     database.transaction(|tx| {
         require_project(tx, project_id)?;
@@ -329,17 +419,13 @@ pub fn create_service(
         })?;
         let id = tx.last_insert_rowid();
         replace_service_accounts(tx, id, accounts, &now)?;
+        replace_service_logins(tx, id, logins, &now)?;
         Ok(id)
     })
 }
 
-pub fn update_service(
-    database: &mut VaultDatabase,
-    id: i64,
-    name: &str,
-    url: &str,
-    accounts: &[(i64, Sealed)],
-) -> VaultResult<()> {
+pub fn update_service(database: &mut VaultDatabase, id: i64, service: &SealedService) -> VaultResult<()> {
+    let SealedService { name, url, accounts, logins } = service;
     let now = now_iso();
     database.transaction(|tx| {
         let rows = tx
@@ -349,7 +435,8 @@ pub fn update_service(
             )
             .map_err(|e| renamed(e.into(), "This project already has a service with that name."))?;
         changed(rows, "Service")?;
-        replace_service_accounts(tx, id, accounts, &now)
+        replace_service_accounts(tx, id, accounts, &now)?;
+        replace_service_logins(tx, id, logins, &now)
     })
 }
 
@@ -395,6 +482,55 @@ pub fn insert_secret(database: &mut VaultDatabase, secret: NewSecret<'_>) -> Vau
             ],
         )?;
         Ok(tx.last_insert_rowid())
+    })
+}
+
+/// A .env import's secret, sealed: added, or (`replace`) the new value and description
+/// of the project's text secret with that id and name.
+pub struct EnvSecret {
+    pub name: String,
+    pub payload: Vec<u8>,
+    pub size: i64,
+    pub description: Sealed,
+    pub replace: Option<i64>,
+}
+
+/// Saves a .env import in one transaction: every secret, or none. Returns (added, updated).
+pub fn import_env(
+    database: &mut VaultDatabase,
+    project_id: i64,
+    service_id: Option<i64>,
+    secrets: &[EnvSecret],
+) -> VaultResult<(usize, usize)> {
+    let now = now_iso();
+    database.transaction(|tx| {
+        require_project(tx, project_id)?;
+        require_service_in(tx, service_id, project_id)?;
+        let (mut added, mut updated) = (0, 0);
+        for secret in secrets {
+            if let Some(id) = secret.replace {
+                let changed = tx.execute(
+                    "UPDATE secrets SET payload = ?1, size = ?2, description = ?3, updated_at = ?4
+                     WHERE id = ?5 AND project_id = ?6 AND kind = 'text' AND name = ?7",
+                    params![secret.payload, secret.size, secret.description, now, id, project_id, secret.name],
+                )?;
+                if changed == 0 {
+                    return Err(VaultError::not_found(format!(
+                        "{} changed since the file was read. Nothing was imported: read it again.",
+                        secret.name
+                    )));
+                }
+                updated += 1;
+            } else {
+                tx.execute(
+                    "INSERT INTO secrets (project_id, service_id, kind, name, mime_type, size, payload, description, created_at, updated_at)
+                     VALUES (?1, ?2, 'text', ?3, 'text/plain', ?4, ?5, ?6, ?7, ?7)",
+                    params![project_id, service_id, secret.name, secret.size, secret.payload, secret.description, now],
+                )?;
+                added += 1;
+            }
+        }
+        Ok((added, updated))
     })
 }
 

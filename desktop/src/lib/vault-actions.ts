@@ -52,7 +52,8 @@ export function emptyAccountDraft(website = ''): AccountDraft {
 async function saveConnections(accountId: number, draft: AccountDraft): Promise<void> {
   unwrap(
     await api.setAccountConnections(accountId, {
-      signIn: draft.method === 'linked' ? draft.signInWith : [],
+      // With a password, "Sign in with" links can be kept too.
+      signIn: draft.method === 'none' ? [] : draft.signInWith,
       recovery: draft.recoveryBy,
       devices: draft.devices.map((d) => ({ deviceId: d.deviceId, note: d.note.trim() }))
     })
@@ -127,11 +128,25 @@ export async function updateAccount(
   }
 }
 
+/** A login being edited in the service form. */
+export interface LoginDraft {
+  /** Keys the row while it has no id. */
+  key: string
+  id: number | null
+  username: string
+  /** Typed here. Empty keeps a saved one. */
+  password: string
+  hasPassword: boolean
+  note: string
+}
+
 export interface ServiceDraft {
   name: string
   url: string
   /** The vault's accounts it uses, in order, each with its role there. Empty: none yet. */
   accounts: ServiceAccount[]
+  /** Its own logins, for what has no account in the vault (a server's root user). */
+  logins: LoginDraft[]
   /** Also create a new account for it (added after the chosen ones). */
   creating: boolean
   newAccount: AccountDraft
@@ -154,7 +169,11 @@ export async function saveService(
     onAccountCreated?.(accountId)
     accounts.push({ accountId, role: draft.newRole.trim() })
   }
-  const input = { name: draft.name, url: draft.url, accounts }
+  const logins = draft.logins
+    // A row added and left blank is just dropped.
+    .filter((l) => l.id !== null || l.username.trim() || l.password || l.note.trim())
+    .map((l) => ({ id: l.id ?? undefined, username: l.username, password: l.password || undefined, note: l.note.trim() }))
+  const input = { name: draft.name, url: draft.url, accounts, logins }
   if (serviceId) unwrap(await api.updateService(serviceId, input))
   else unwrap(await api.createService(projectId, input))
   await refreshVault(queryClient)

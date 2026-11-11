@@ -101,6 +101,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "service-accounts-roles-descriptions-device-notes",
         sql: include_str!("migrations/0005_roles_and_descriptions.sql"),
     },
+    Migration {
+        version: 6,
+        name: "service-logins",
+        sql: include_str!("migrations/0006_service_logins.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.
@@ -549,7 +554,7 @@ mod tests {
         v4.close();
 
         let v5 = VaultDatabase::open(&path).unwrap();
-        assert_eq!(v5.schema_version().unwrap(), 5);
+        assert_eq!(v5.schema_version().unwrap(), MIGRATIONS.last().unwrap().version);
         let conn = v5.connection();
         let linked: Vec<(i64, i64, Option<Vec<u8>>, i64, String)> = conn
             .prepare("SELECT service_id, account_id, role, position, created_at FROM service_accounts")

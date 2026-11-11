@@ -190,11 +190,9 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
   // What protects it, at a glance: one quiet chip per kind.
   const kinds = [...new Set(steps.map((f) => f.kind))] as FactorKind[]
   const protections = [
-    relations.signsInWith.length
-      ? { key: 'via', label: `Signs in with ${relations.signsInWith[0].domainName}` }
-      : account.hasPassword
-        ? { key: 'pw', label: 'Password' }
-        : { key: 'none', label: 'No password' },
+    ...(account.hasPassword ? [{ key: 'pw', label: 'Password' }] : []),
+    ...(relations.signsInWith.length ? [{ key: 'via', label: `Signs in with ${relations.signsInWith[0].domainName}` }] : []),
+    ...(!account.hasPassword && !relations.signsInWith.length ? [{ key: 'none', label: 'No password' }] : []),
     ...kinds.map((kind) => {
       const n = steps.filter((f) => f.kind === kind).length
       return { key: kind, label: n > 1 ? `${FACTORS[kind].name} ×${n}` : FACTORS[kind].name, icon: FACTORS[kind].icon }
@@ -289,14 +287,14 @@ function AccountView({ accountId }: { accountId: number }): React.ReactElement {
                   />
                 ))}
                 {relations.recoveredBy.length > 0 && <RecoveryAccountWay accounts={relations.recoveredBy} />}
-                {steps.length === 0 && relations.signsInWith.length === 0 && (
+                {steps.length === 0 && (relations.signsInWith.length === 0 || account.hasPassword) && (
                   <EmptyLine title="No second step saved.">
                     Add the authenticator app, passkeys, security keys or recovery codes it uses, so getting back in never
                     depends on remembering them.
                   </EmptyLine>
                 )}
               </ListFrame>
-              {steps.length === 0 && relations.signsInWith.length > 0 && (
+              {steps.length === 0 && relations.signsInWith.length > 0 && !account.hasPassword && (
                 <p className="mt-3 px-1 text-[12.5px] leading-relaxed text-muted-foreground">
                   It signs in with {relations.signsInWith.map((a) => a.domainName).join(' or ')}, so the second steps that
                   matter are saved there. Add one here only if {account.domainName} asks for its own.

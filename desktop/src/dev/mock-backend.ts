@@ -81,6 +81,7 @@ const services = [
   { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.acme.dev', accounts: [{ accountId: 7, role: 'admin, server owner' }, { accountId: 22, role: 'billing' }], createdAt: iso(40), updatedAt: iso(3) },
   { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/acme', accounts: [{ accountId: 5, role: '' }], createdAt: iso(39), updatedAt: iso(9) },
   { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/acme', accounts: [] as { accountId: number; role: string }[], createdAt: iso(38), updatedAt: iso(12) },
+  { id: 5, projectId: 1, name: 'Prod server', url: '203.0.113.7:22', accounts: [] as { accountId: number; role: string }[], createdAt: iso(20), updatedAt: iso(2) },
   { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) },
   // Many services in one project, to see the list at that scale.
   ...[
@@ -101,6 +102,26 @@ const services = [
     updatedAt: iso(i % 9)
   }))
 ]
+// A service's own logins (a server's users), and their passwords.
+type MockLogin = { id: number; username: string; note: string; hasPassword: boolean }
+const serviceLogins = new Map<number, MockLogin[]>([
+  [5, [{ id: 900, username: 'root', note: 'full access, SSH', hasPassword: true }, { id: 901, username: 'deploy', note: 'SSH key only', hasPassword: false }]]
+])
+const loginPasswords = new Map<number, string>([[900, 'correct-horse-battery']])
+function saveLogins(serviceId: number, input: { id?: number; username: string; password?: string; note: string }[] = []): void {
+  serviceLogins.set(
+    serviceId,
+    input.map((l) => {
+      const id = l.id ?? nextId++
+      if (l.password !== undefined) {
+        if (l.password) loginPasswords.set(id, l.password)
+        else loginPasswords.delete(id)
+      }
+      return { id, username: l.username.trim(), note: l.note, hasPassword: loginPasswords.has(id) }
+    })
+  )
+}
+
 const secretValues = new Map<number, string>([
   [1, 'sk_live_51Hx0aBcDeFgHiJkLmNoPqRsTuVwXyZ'],
   [2, 'postgres://acme:R7q!vP2@db.acme.dev:5432/shop'],
@@ -208,6 +229,36 @@ async function totp(secret: string): Promise<{ code: string; period: number; exp
   const offset = mac[19] & 0xf
   const binary = ((mac[offset] & 0x7f) << 24) | (mac[offset + 1] << 16) | (mac[offset + 2] << 8) | mac[offset + 3]
   return { code: String(binary % 1_000_000).padStart(6, '0'), period: 30, expiresAt: (step + 1) * 30_000 }
+}
+
+const PREVIEW_ENV = `# Shop production
+STRIPE_SECRET_KEY=sk_live_51Hx9 # live payments, full write access
+DATABASE_URL="postgres://shop:p#ss@db.internal:5432/shop" # production database
+RESEND_API_KEY=re_8f2k
+SENTRY_DSN=https://k@o1.ingest.sentry.io/4 # frontend error reporting
+EMPTY_ONE=
+not a variable line
+`
+
+function previewParseEnv(text: string): { entries: { line: number; name: string; value: string; comment: string }[]; skipped: { line: number; reason: string }[] } {
+  const entries: { line: number; name: string; value: string; comment: string }[] = []
+  const skipped: { line: number; reason: string }[] = []
+  text.split('\n').forEach((raw, i) => {
+    const line = raw.trim().replace(/^export\s+/, '')
+    if (!line || line.startsWith('#')) return
+    const match = /^([A-Za-z_][\w.-]*)\s*=\s*(.*)$/.exec(line)
+    if (!match) return void skipped.push({ line: i + 1, reason: 'Not a NAME=value line.' })
+    const [, name, rest] = match
+    const quoted = /^(["'`])(.*?)\1\s*(?:#\s*(.*))?$/.exec(rest)
+    const plain = /^(.*?)(?:(?:^|\s)#\s*(.*))?$/.exec(rest)!
+    const value = quoted ? quoted[2] : plain[1].trim()
+    const comment = (quoted ? quoted[3] : plain[2])?.trim() ?? ''
+    if (!value) return void skipped.push({ line: i + 1, reason: `${name} has no value.` })
+    const earlier = entries.findIndex((e) => e.name === name)
+    if (earlier >= 0) skipped.push({ line: entries.splice(earlier, 1)[0].line, reason: `${name} is set again on line ${i + 1}, which is kept.` })
+    entries.push({ line: i + 1, name, value, comment })
+  })
+  return { entries, skipped: skipped.sort((a, b) => a.line - b.line) }
 }
 
 function removeWhere<T>(list: T[], test: (item: T) => boolean): void {
@@ -318,7 +369,7 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     }
     case 'load_workspace':
-      return { projects, services, secrets }
+      return { projects, services: services.map((x) => ({ ...x, logins: serviceLogins.get(x.id) ?? [] })), secrets }
     case 'create_project': {
       const input = args.input as { name: string; description?: string }
       const id = nextId++
@@ -338,16 +389,24 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     }
     case 'create_service': {
-      const input = args.input as { name: string; url?: string; accounts?: { accountId: number; role: string }[] }
+      const input = args.input as { name: string; url?: string; accounts?: { accountId: number; role: string }[]; logins?: { id?: number; username: string; password?: string; note: string }[] }
       const id = nextId++
       services.push({ id, projectId: args.projectId as number, name: input.name, url: input.url ?? '', accounts: input.accounts ?? [], createdAt: iso(0), updatedAt: iso(0) })
+      saveLogins(id, input.logins)
       return { id }
     }
     case 'update_service': {
       const service = services.find((x) => x.id === args.serviceId)
       if (!service) fail('NOT_FOUND', 'Service not found.')
-      Object.assign(service, args.input as object, { updatedAt: iso(0) })
+      const { logins, ...rest } = args.input as { logins?: { id?: number; username: string; password?: string; note: string }[] }
+      Object.assign(service, rest, { updatedAt: iso(0) })
+      saveLogins(service.id, logins)
       return null
+    }
+    case 'reveal_service_login': {
+      const password = loginPasswords.get(args.loginId as number)
+      if (password === undefined) fail('NOT_FOUND', 'This login has no password.')
+      return { value: password }
     }
     case 'delete_service': {
       const at = services.findIndex((x) => x.id === args.serviceId)
@@ -412,6 +471,33 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
     }
     case 'export_secret':
       return { saved: true }
+    // The .env import. The app reads with src-tauri/src/dotenv.rs; this is a short
+    // stand-in for the browser preview (one-line values only).
+    case 'parse_env':
+      return previewParseEnv(args.text as string)
+    case 'pick_env_file':
+    case 'read_staged_env':
+      staged.length = 0
+      return { name: 'production.env', text: PREVIEW_ENV }
+    case 'import_env': {
+      let added = 0
+      let updated = 0
+      for (const input of args.secrets as { name: string; value: string; description: string; replace: number | null }[]) {
+        const existing = secrets.find((x) => x.id === input.replace)
+        if (existing) {
+          existing.description = input.description
+          existing.updatedAt = iso(0)
+          secretValues.set(existing.id, input.value)
+          updated++
+        } else {
+          const id = nextId++
+          secretValues.set(id, input.value)
+          secrets.push({ id, projectId: args.projectId as number, serviceId: (args.serviceId as number | null) ?? null, kind: 'text', name: input.name, mimeType: 'text/plain', size: input.value.length, description: input.description, createdAt: iso(0), updatedAt: iso(0) })
+          added++
+        }
+      }
+      return { added, updated }
+    }
     case 'list_account_links':
       return { links }
     case 'set_sign_in_links':

@@ -223,6 +223,67 @@ pub struct ProjectInput {
     pub description: String,
 }
 
+/// A login a service keeps itself (a server's root user), as the service form sends
+/// it. `id`: an existing login, kept. `password`: absent keeps an existing login's
+/// password (a new one has none), empty clears it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServiceLoginInput {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub username: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub note: String,
+}
+
+impl Drop for ServiceLoginInput {
+    fn drop(&mut self) {
+        if let Some(password) = &mut self.password {
+            zeroize::Zeroize::zeroize(password);
+        }
+    }
+}
+
+/// At most this many logins on one service.
+pub const MAX_SERVICE_LOGINS: usize = 20;
+
+/// A checked login: username and note trimmed, the password as given.
+pub struct ValidLogin<'a> {
+    pub id: Option<i64>,
+    pub username: String,
+    pub password: Option<&'a str>,
+    pub note: String,
+}
+
+pub fn validate_service_logins(logins: &[ServiceLoginInput]) -> VaultResult<Vec<ValidLogin<'_>>> {
+    if logins.len() > MAX_SERVICE_LOGINS {
+        return Err(VaultError::invalid_input(format!(
+            "A service can keep at most {MAX_SERVICE_LOGINS} logins."
+        )));
+    }
+    let mut valid: Vec<ValidLogin<'_>> = Vec::with_capacity(logins.len());
+    for login in logins {
+        let id = validate_optional_id(login.id, "login id")?;
+        if id.is_some() && valid.iter().any(|seen| seen.id == id) {
+            return Err(VaultError::invalid_input("That login is listed twice."));
+        }
+        if let Some(password) = &login.password
+            && password.len() > MAX_PASSWORD_BYTES
+        {
+            return Err(VaultError::invalid_input("That password is too long."));
+        }
+        valid.push(ValidLogin {
+            id,
+            username: validate_name(&login.username, "username for each login", 200)?,
+            password: login.password.as_deref(),
+            note: validate_optional_text(&login.note, "note", MAX_ROLE)?,
+        });
+    }
+    Ok(valid)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ServiceInput {
@@ -232,6 +293,9 @@ pub struct ServiceInput {
     /// The accounts it uses, in order (the first is the main one).
     #[serde(default)]
     pub accounts: Vec<ServiceAccountInput>,
+    /// Its own logins, in order. Absent: none (and, on an update, all removed).
+    #[serde(default)]
+    pub logins: Vec<ServiceLoginInput>,
 }
 
 #[derive(Deserialize)]
@@ -251,6 +315,22 @@ pub struct DeviceLinkInput {
     #[serde(default)]
     pub note: String,
 }
+
+/// A secret read from a .env file, as chosen in the import dialog. `replace`: the
+/// project's text secret of that name whose value and description it updates.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvSecretInput {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub replace: Option<i64>,
+}
+
+/// At most this many secrets in one .env import.
+pub const MAX_ENV_SECRETS: usize = 500;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

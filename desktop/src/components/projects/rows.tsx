@@ -16,7 +16,7 @@ import {
 } from '@phosphor-icons/react'
 import type { Icon } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { AccountSummary, SecretMeta, Service } from '@renderer/shared/contracts'
+import type { AccountSummary, SecretMeta, Service, ServiceLogin } from '@renderer/shared/contracts'
 import { Expand } from '@renderer/components/accounts/parts'
 import { CopyAction } from '@renderer/components/ui/copy'
 import { IconButton } from '@renderer/components/ui/icon-button'
@@ -67,8 +67,13 @@ export function ServiceRow({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [main] = accounts
-  const more = accounts.length - 1
+  const { logins } = service
+  // With no account, its first own login is the main one.
+  const mainLogin = main ? undefined : logins[0]
+  const more = accounts.length + logins.length - 1
   const host = hostOf(service.url)
+  // A server's address is copied as typed (with its port); a URL as it is.
+  const address = service.url.trim()
 
   // Decrypted only when copied.
   const passwordOf = (account: AccountSummary) => async (): Promise<string> => {
@@ -83,7 +88,21 @@ export function ServiceRow({
   const copies = (view: ServiceAccountView) => (
     <>
       <CopyAction label={`Copy ${view.account.domainName} email`} value={view.account.email} />
-      {!view.via && <CopyAction label={`Copy ${view.account.domainName} password`} value={passwordOf(view.account)} secret />}
+      {view.account.hasPassword && (
+        <CopyAction label={`Copy ${view.account.domainName} password`} value={passwordOf(view.account)} secret />
+      )}
+    </>
+  )
+  const loginCopies = (login: ServiceLogin) => (
+    <>
+      <CopyAction label={`Copy username ${login.username}`} value={login.username} />
+      {login.hasPassword && (
+        <CopyAction
+          label={`Copy ${login.username} password`}
+          value={async () => unwrap(await api.revealServiceLogin(login.id)).value}
+          secret
+        />
+      )}
     </>
   )
 
@@ -104,9 +123,9 @@ export function ServiceRow({
             {host && <span className="ml-2 text-[13px] text-muted-foreground">{host}</span>}
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[13.5px]">
-            {main ? (
+            {main || mainLogin ? (
               <>
-                <span className="truncate text-foreground">{main.account.email}</span>
+                <span className="truncate text-foreground">{main ? main.account.email : mainLogin?.username}</span>
                 {more > 0 && (
                   <span className="shrink-0 rounded-md bg-secondary px-1.5 text-[11.5px] leading-5 text-muted-foreground tabular-nums dark:bg-white/8">
                     +{more}
@@ -114,12 +133,12 @@ export function ServiceRow({
                 )}
               </>
             ) : (
-              <span className="truncate text-muted-foreground/70">No account linked</span>
+              <span className="truncate text-muted-foreground/70">No account or login</span>
             )}
           </span>
         </button>
         <div className={`${COPIES} opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100`}>
-          {main && copies(main)}
+          {main ? copies(main) : mainLogin && loginCopies(mainLogin)}
         </div>
         <div className="flex shrink-0 items-center">
           <RowMenu label={`More actions for ${service.name}`}>
@@ -176,11 +195,35 @@ export function ServiceRow({
               <span aria-hidden="true" className="w-[3.25rem] shrink-0" />
             </div>
           ))}
-          {accounts.length === 0 && (
+          {logins.length > 0 && address && (
+            <div className="flex items-center gap-0 py-1">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[13px] text-heading">{address}</p>
+                <p className="truncate text-[12.5px] text-muted-foreground">Address</p>
+              </div>
+              <div className={COPIES}>
+                <CopyAction label={`Copy the address of ${service.name}`} value={address} />
+              </div>
+              <span aria-hidden="true" className="w-[3.25rem] shrink-0" />
+            </div>
+          )}
+          {logins.map((login) => (
+            <div key={`login-${login.id}`} className="flex items-center gap-0 py-1">
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-[13px] text-heading">{login.username}</p>
+                <p className="truncate text-[12.5px] text-muted-foreground">
+                  {['Login', login.note, !login.hasPassword && 'no password'].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+              <div className={COPIES}>{loginCopies(login)}</div>
+              <span aria-hidden="true" className="w-[3.25rem] shrink-0" />
+            </div>
+          ))}
+          {accounts.length === 0 && logins.length === 0 && (
             <p className="py-1 text-[13px] text-muted-foreground">
-              No account linked.{' '}
+              No account or login yet.{' '}
               <button type="button" onClick={onEdit} className="cursor-pointer text-primary hover:underline">
-                Link one
+                Add one
               </button>
             </p>
           )}

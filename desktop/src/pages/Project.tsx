@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FilePlus, Plus, Trash } from '@phosphor-icons/react'
+import { FileArrowUp, FilePlus, Plus, Trash } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AccountSummary, SecretMeta, Service, StagedList } from '@renderer/shared/contracts'
 import { RelatedGroup } from '@renderer/components/accounts/parts'
@@ -18,6 +18,7 @@ import {
 import { SecretRow, ServiceRow, type ServiceAccountView } from '@renderer/components/projects/rows'
 import { SecretForm, ServiceForm } from '@renderer/components/projects/forms'
 import { UploadFiles } from '@renderer/components/projects/UploadFiles'
+import { ImportEnv } from '@renderer/components/projects/ImportEnv'
 import { ListFilter, listFooter, MoreLine, NoMatchLine, useLongList, useSlashToFilter } from '@renderer/components/layout/long-list'
 import { Button } from '@renderer/components/ui/button'
 import { useConfirm } from '@renderer/components/ui/confirm'
@@ -35,6 +36,7 @@ type ModalState =
   | { open: boolean; kind: 'service'; service: Service | null }
   | { open: boolean; kind: 'secret'; secret: SecretMeta | null }
   | { open: boolean; kind: 'upload'; incoming: StagedList | null }
+  | { open: boolean; kind: 'env'; incoming: StagedList | null }
 
 /**
  * Pattern: Detail / Record. One project: name and description edited in place,
@@ -89,12 +91,16 @@ export default function ProjectPage(): React.ReactElement {
   useShowSection(!!project)
 
   // Files dropped onto the window wait in the upload dialog, which opens (or, if
-  // open, shows them too).
+  // open, shows them too). Onto the .env import, a dropped file is read as the .env.
   useEffect(() => {
     if (!dropped || !project) return
     setDropped(null)
     setModal((current) =>
-      current.open && current.kind !== 'upload' ? current : { open: true, kind: 'upload', incoming: dropped }
+      !current.open || current.kind === 'upload'
+        ? { open: true, kind: 'upload', incoming: dropped }
+        : current.kind === 'env'
+          ? { ...current, incoming: dropped }
+          : current
     )
   }, [dropped, project, setDropped])
 
@@ -102,6 +108,7 @@ export default function ProjectPage(): React.ReactElement {
 
   const addService = (): void => setModal({ open: true, kind: 'service', service: null })
   const addSecret = (): void => setModal({ open: true, kind: 'secret', secret: null })
+  const importEnv = (): void => setModal({ open: true, kind: 'env', incoming: null })
 
   // ⌘N adds a service.
   useEffect(() => {
@@ -303,6 +310,10 @@ export default function ProjectPage(): React.ReactElement {
               action={
                 <div className="flex items-center gap-2">
                   <ListFilter list={secretList} label="Filter secrets" />
+                  <Button size="md" variant="ghost" onClick={importEnv}>
+                    <FileArrowUp size={14} />
+                    Import .env
+                  </Button>
                   <Button size="md" onClick={addSecret}>
                     <Plus size={13} weight="bold" />
                     Add secret
@@ -402,10 +413,13 @@ export default function ProjectPage(): React.ReactElement {
       <Modal
         open={modal.open}
         onOpenChange={(open) => !open && closeModal()}
+        size={modal.kind === 'env' ? 'lg' : 'md'}
         title={
           modal.kind === 'upload'
             ? 'Add files'
-            : modal.kind === 'service'
+            : modal.kind === 'env'
+              ? 'Import .env'
+              : modal.kind === 'service'
               ? modal.service
                 ? 'Edit service'
                 : 'Add service'
@@ -419,6 +433,14 @@ export default function ProjectPage(): React.ReactElement {
       >
         {modal.kind === 'upload' ? (
           <UploadFiles projectId={project.id} services={projectServices} incoming={modal.incoming} onDone={closeModal} />
+        ) : modal.kind === 'env' ? (
+          <ImportEnv
+            projectId={project.id}
+            services={projectServices}
+            secrets={textSecrets}
+            incoming={modal.incoming}
+            onDone={closeModal}
+          />
         ) : modal.kind === 'service' ? (
           <ServiceForm
             key={modal.service?.id ?? 'new'}

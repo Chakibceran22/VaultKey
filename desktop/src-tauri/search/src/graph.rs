@@ -143,6 +143,11 @@ pub fn build(vault: &Vault) -> Graph {
         let subtitle = format!("Service in {}", project.unwrap_or("a project"));
         let mut t = terms(&s.name, 1.0);
         t.extend(terms(&s.url, 0.7));
+        // Its own logins: "root prod" finds the server whose root user it is.
+        for login in &s.logins {
+            t.extend(terms(&login.username, 0.6));
+            t.extend(terms(&login.note, 0.5));
+        }
         let mut text = format!("{}: service of the project {}", s.name, project.unwrap_or("?"));
         if !s.url.is_empty() {
             text += &format!(", at {}", host(&s.url));
@@ -165,7 +170,7 @@ pub fn build(vault: &Vault) -> Graph {
     for d in &vault.devices {
         let kind = device_name(&d.kind);
         let mut t = terms(&d.name, 1.0);
-        t.extend(terms(&d.notes, 0.4));
+        t.extend(terms(&d.notes, 0.5));
         let text = format!("{}: {}. {}", d.name, kind.to_lowercase(), d.notes);
         g.add(
             node(format!("device:{}", d.id), NodeKind::Device, &d.name, kind.to_owned(), format!("/devices?open={}", d.id), Some(&d.kind)),
@@ -243,8 +248,8 @@ pub fn build(vault: &Vault) -> Graph {
         let (account, device) = (format!("account:{}", l.account_id), format!("device:{}", l.device_id));
         g.link(&account, &device, "signed in on", "signed in to");
         // What it does there ("authenticator") names both ends a little.
-        g.add_terms(&account, terms(&l.note, 0.4));
-        g.add_terms(&device, terms(&l.note, 0.4));
+        g.add_terms(&account, terms(&l.note, 0.5));
+        g.add_terms(&device, terms(&l.note, 0.5));
     }
     for s in &vault.account_secrets {
         let kind = if s.kind == "note" { "note" } else { "account-secret" };

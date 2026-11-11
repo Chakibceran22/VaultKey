@@ -149,7 +149,12 @@ export function buildGraph(input: GraphInput): VaultGraph {
       title: service.name,
       subtitle: `Service in ${projectName.get(service.projectId) ?? 'a project'}`,
       to: `/projects/${service.projectId}?show=services`,
-      terms: [...terms(service.name, 1), ...terms(service.url, 0.7)]
+      // Its own logins too: "root prod" finds the server whose root user it is.
+      terms: [
+        ...terms(service.name, 1),
+        ...terms(service.url, 0.7),
+        ...service.logins.flatMap((login) => [...terms(login.username, 0.6), ...terms(login.note, 0.5)])
+      ]
     })
   }
   for (const device of input.devices) {
@@ -160,7 +165,7 @@ export function buildGraph(input: GraphInput): VaultGraph {
       subtitle: input.names.device(device.kind),
       to: `/devices?open=${device.id}`,
       detail: device.kind,
-      terms: [...terms(device.name, 1), ...terms(device.notes, 0.4)]
+      terms: [...terms(device.name, 1), ...terms(device.notes, 0.5)]
     })
   }
   for (const factor of input.factors) {
@@ -215,8 +220,8 @@ export function buildGraph(input: GraphInput): VaultGraph {
   for (const l of input.deviceLinks) {
     link(`account:${l.accountId}`, `device:${l.deviceId}`, 'signed in on', 'signed in to')
     // What it does there ("authenticator") names both ends a little.
-    nodes.get(`account:${l.accountId}`)?.terms.push(...terms(l.note, 0.4))
-    nodes.get(`device:${l.deviceId}`)?.terms.push(...terms(l.note, 0.4))
+    nodes.get(`account:${l.accountId}`)?.terms.push(...terms(l.note, 0.5))
+    nodes.get(`device:${l.deviceId}`)?.terms.push(...terms(l.note, 0.5))
   }
   for (const secret of input.accountSecrets) {
     const kind = secret.kind === 'note' ? 'note' : 'account-secret'
