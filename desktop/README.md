@@ -9,6 +9,10 @@ There is no account to create, no server, no sync and no internet connection: th
 can't reach the network at all. It runs on **macOS, Windows and Linux** (Tauri 2: a
 Rust core with a React interface).
 
+![VaultKey's accounts page: accounts grouped by what they're for](docs/screenshots/accounts.webp)
+
+*Screenshots show made-up test data.*
+
 **Contents:**
 [Using VaultKey](#using-vaultkey) ·
 [Your master password and recovery code](#your-master-password-and-recovery-code) ·
@@ -28,10 +32,15 @@ Rust core with a React interface).
    you will need to remember. Nobody can reset it for you, so make it strong and
    memorable.
 2. You're taken to the lock screen. **Unlock** with the password you just chose.
+
+   ![The lock screen](docs/screenshots/lock.webp)
+
 3. **Save your recovery code.** VaultKey shows 24 words, once. Write them on paper,
    numbered and in order, then type three of them back with your master password to
    confirm. This screen can't be skipped: until a code is saved, it comes back at
    every unlock.
+
+   ![The recovery code, shown once: 24 numbered words](docs/screenshots/recovery-code.webp)
 
 ### Every day
 
@@ -63,6 +72,8 @@ way back in if you forget it.
 4. The vault opens with the new password, and asks you to save a **new recovery code**
    right away (the old one has now been typed in somewhere). The old code keeps working
    until the new one is saved.
+
+![Recovering a vault: the 24 words and a new master password](docs/screenshots/recover.webp)
 
 ### Changing your master password
 
@@ -99,6 +110,25 @@ Your data comes along on its own:
 | **Devices** | Your phones, computers, tablets and security keys: the sign-in steps that live on each one, the accounts signed in on it, and a warning about accounts with no backup if you lost it. |
 | **Search** | ⌘K (Ctrl+K), in your own words: "github recovery codes", "what signs in with google", "device for coolify", "root prod server". It follows the links between things, shows how it read the question, and the path to each answer. |
 
+**An account**: how it signs in (here a password, a live authenticator code, a passkey,
+a security key and recovery codes), its recovery account, and everything it connects to.
+
+![An account's page: its sign-in steps and connections](docs/screenshots/account.webp)
+
+**A project**: its services, here a server with its own logins opened up, its secrets
+and files, and the accounts it depends on.
+
+![A project's page: services, a server's logins, secrets](docs/screenshots/project.webp)
+
+**Devices**: what lives on each phone, computer and security key.
+
+![The devices page](docs/screenshots/devices.webp)
+
+**Search** (⌘K): ask in your own words. It shows how it read the question, the answers,
+and for each one the path of links that leads to it.
+
+![Search: "what signs in with google"](docs/screenshots/search.webp)
+
 ### Importing a .env file
 
 In a project's **Secrets**: **Import .env**, then paste the file, choose it (in the
@@ -116,6 +146,8 @@ Quoted values may span lines (a private key), and `export NAME=value` works too.
 every secret before importing: untick any, edit descriptions. Names already in the
 project are marked **Replaces** and get the new value. Lines that can't be read are
 listed with the reason. Everything is saved together, or nothing is.
+
+![Importing a .env file: each line becomes a secret, its comment the description](docs/screenshots/env-import.webp)
 
 ### Getting around
 
@@ -398,7 +430,8 @@ VAULTKEY_COMPAT_DB=/tmp/vault-copy.sqlite3 cargo test real_vault_copy -- --ignor
 **Browser preview.** `pnpm dev` opened in a normal browser tab (not the app window) runs
 on an in-memory mock with made-up data (`src/dev/mock-backend.ts`). A badge marks it,
 and any master password works except `wrong`. It never runs inside the app and is not
-part of builds.
+part of builds. The screenshots in this README are taken from it, so they only ever
+show that test data.
 
 ### Architecture
 

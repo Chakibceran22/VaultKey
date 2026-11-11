@@ -40,49 +40,49 @@ const domains = [
   { id: 15, name: 'revolut.com', createdAt: iso(260), updatedAt: iso(26) },
   { id: 16, name: 'netflix.com', createdAt: iso(500), updatedAt: iso(90) },
   { id: 17, name: 'amazon.fr', createdAt: iso(450), updatedAt: iso(15) },
-  { id: 18, name: 'auratech.com', createdAt: iso(35), updatedAt: iso(35) },
+  { id: 18, name: 'example.dev', createdAt: iso(35), updatedAt: iso(35) },
   { id: 19, name: 'hetzner.com', createdAt: iso(42), updatedAt: iso(6) }
 ]
 
 const credentials: MockCredential[] = [
-  { id: 1, domainId: 1, username: 'alex-dev', email: 'alex@example.com', password: 'gh-Xr7!qLm2#vTp9' },
+  { id: 1, domainId: 1, username: 'test-dev', email: 'test@example.com', password: 'gh-Xr7!qLm2#vTp9' },
   { id: 2, domainId: 1, username: null, email: 'work@example.com', password: 'Tq8$zN1u@Kc5wYe3' },
-  { id: 3, domainId: 2, username: 'alex', email: 'alex@example.com', password: '' },
-  { id: 4, domainId: 3, username: null, email: 'alex@example.com', password: 'lin-7Hq#2Vb9' },
-  { id: 5, domainId: 4, username: 'alexd', email: 'alex@example.com', password: '' },
+  { id: 3, domainId: 2, username: 'tester', email: 'test@example.com', password: '' },
+  { id: 4, domainId: 3, username: null, email: 'test@example.com', password: 'lin-7Hq#2Vb9' },
+  { id: 5, domainId: 4, username: 'tester1', email: 'test@example.com', password: '' },
   { id: 6, domainId: 6, username: null, email: 'billing@example.com', password: 'St9#qW2eR7tY!u' },
-  { id: 7, domainId: 7, username: null, email: 'alex.martin@gmail.com', password: 'G0og!e-Qz82#kLp' },
-  { id: 8, domainId: 7, username: null, email: 'alex.work@gmail.com', password: 'password123' },
-  { id: 9, domainId: 7, username: null, email: 'alex.shop@gmail.com', password: 'Wq7!nB3#xP0s' },
-  { id: 10, domainId: 8, username: null, email: 'alex@icloud.com', password: 'Ap9#Lm2!qW7e' },
-  { id: 11, domainId: 9, username: 'alexd#4821', email: 'alex@example.com', password: 'Dc5!zX8@vN1m' },
-  { id: 12, domainId: 10, username: null, email: 'alex@proton.me', password: 'Pr0t#9Vn!2Qx' },
-  { id: 13, domainId: 10, username: null, email: 'alex.backup@proton.me', password: 'Bk7@pR2#mL9z' },
-  { id: 14, domainId: 11, username: 'alexplays', email: 'alex.martin@gmail.com', password: 'St3am!kQ9#xL' },
-  { id: 15, domainId: 12, username: 'Alex#2291', email: 'alex.martin@gmail.com', password: 'Bn7#qL2!vX9p' },
-  { id: 16, domainId: 13, username: null, email: 'alex@example.com', password: '' },
-  { id: 17, domainId: 14, username: null, email: 'alex.shop@gmail.com', password: 'Pp4!mZ8#tQ2w' },
-  { id: 18, domainId: 15, username: null, email: 'alex.martin@gmail.com', password: 'Rv6@nL3#kP9s' },
-  { id: 19, domainId: 16, username: null, email: 'alex.martin@gmail.com', password: 'Nf2#xQ7!bL4m' },
-  { id: 20, domainId: 17, username: null, email: 'alex.shop@gmail.com', password: 'Am9!pW3#rT6k' },
-  { id: 21, domainId: 18, username: null, email: 'alex@example.com', password: 'Au5#tR8!cH2q', category: 'Work' },
+  { id: 7, domainId: 7, username: null, email: 'you@example.com', password: 'G0og!e-Qz82#kLp' },
+  { id: 8, domainId: 7, username: null, email: 'work@example.org', password: 'password123' },
+  { id: 9, domainId: 7, username: null, email: 'shop@example.com', password: 'Wq7!nB3#xP0s' },
+  { id: 10, domainId: 8, username: null, email: 'you@example.net', password: 'Ap9#Lm2!qW7e' },
+  { id: 11, domainId: 9, username: 'tester#4821', email: 'test@example.com', password: 'Dc5!zX8@vN1m' },
+  { id: 12, domainId: 10, username: null, email: 'private@example.org', password: 'Pr0t#9Vn!2Qx' },
+  { id: 13, domainId: 10, username: null, email: 'backup@example.org', password: 'Bk7@pR2#mL9z' },
+  { id: 14, domainId: 11, username: 'test-player', email: 'you@example.com', password: 'St3am!kQ9#xL' },
+  { id: 15, domainId: 12, username: 'Tester#2291', email: 'you@example.com', password: 'Bn7#qL2!vX9p' },
+  { id: 16, domainId: 13, username: null, email: 'test@example.com', password: '' },
+  { id: 17, domainId: 14, username: null, email: 'shop@example.com', password: 'Pp4!mZ8#tQ2w' },
+  { id: 18, domainId: 15, username: null, email: 'you@example.com', password: 'Rv6@nL3#kP9s' },
+  { id: 19, domainId: 16, username: null, email: 'you@example.com', password: 'Nf2#xQ7!bL4m' },
+  { id: 20, domainId: 17, username: null, email: 'shop@example.com', password: 'Am9!pW3#rT6k' },
+  { id: 21, domainId: 18, username: null, email: 'test@example.com', password: 'Au5#tR8!cH2q', category: 'Work' },
   { id: 22, domainId: 19, username: null, email: 'billing@example.com', password: 'Hz4!nR9#bL2t' }
 ]
 
 
 // ── projects, services, secrets, links (schema v2) ──
 const projects = [
-  { id: 1, name: 'Acme Store', description: 'Shop rebuild on Next.js, self-hosted on Hetzner.', createdAt: iso(40), updatedAt: iso(2) },
-  { id: 2, name: 'Portfolio', description: 'Personal site and blog.', createdAt: iso(90), updatedAt: iso(30) },
-  { id: 3, name: 'Side quest', description: '', createdAt: iso(5), updatedAt: iso(5) },
-  { id: 4, name: 'Agency clients', description: 'Sites and apps run for clients: a project with many services.', createdAt: iso(60), updatedAt: iso(1) }
+  { id: 1, name: 'Example Store', description: 'An example online shop, self-hosted.', createdAt: iso(40), updatedAt: iso(2) },
+  { id: 2, name: 'Example Portfolio', description: 'An example personal site.', createdAt: iso(90), updatedAt: iso(30) },
+  { id: 3, name: 'Test Project', description: '', createdAt: iso(5), updatedAt: iso(5) },
+  { id: 4, name: 'Big Project', description: 'A big example project with many services.', createdAt: iso(60), updatedAt: iso(1) }
 ]
 const services = [
-  { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.acme.dev', accounts: [{ accountId: 7, role: 'admin, server owner' }, { accountId: 22, role: 'billing' }], createdAt: iso(40), updatedAt: iso(3) },
-  { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/acme', accounts: [{ accountId: 5, role: '' }], createdAt: iso(39), updatedAt: iso(9) },
-  { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/acme', accounts: [] as { accountId: number; role: string }[], createdAt: iso(38), updatedAt: iso(12) },
+  { id: 1, projectId: 1, name: 'Coolify', url: 'https://coolify.example.dev', accounts: [{ accountId: 7, role: 'admin, server owner' }, { accountId: 22, role: 'billing' }], createdAt: iso(40), updatedAt: iso(3) },
+  { id: 2, projectId: 1, name: 'Vercel', url: 'https://vercel.com/example', accounts: [{ accountId: 5, role: '' }], createdAt: iso(39), updatedAt: iso(9) },
+  { id: 3, projectId: 1, name: 'Supabase', url: 'https://supabase.com/dashboard/project/example', accounts: [] as { accountId: number; role: string }[], createdAt: iso(38), updatedAt: iso(12) },
   { id: 5, projectId: 1, name: 'Prod server', url: '203.0.113.7:22', accounts: [] as { accountId: number; role: string }[], createdAt: iso(20), updatedAt: iso(2) },
-  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/alex/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) },
+  { id: 4, projectId: 2, name: 'GitHub Pages', url: 'https://github.com/example/site', accounts: [{ accountId: 1, role: 'deploys the site' }], createdAt: iso(90), updatedAt: iso(30) },
   // Many services in one project, to see the list at that scale.
   ...[
     'Cloudflare', 'Coolify (prod)', 'Coolify (staging)', 'Datadog', 'DigitalOcean', 'Docker Hub', 'Fastly',
@@ -124,10 +124,10 @@ function saveLogins(serviceId: number, input: { id?: number; username: string; p
 
 const secretValues = new Map<number, string>([
   [1, 'sk_live_51Hx0aBcDeFgHiJkLmNoPqRsTuVwXyZ'],
-  [2, 'postgres://acme:R7q!vP2@db.acme.dev:5432/shop'],
+  [2, 'postgres://example:R7q!vP2@db.example.dev:5432/shop'],
   [3, 're_9xY2kLmN4pQ7rS1t'],
   [4, '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACBpreview0nly0made0up0key0material0here0nothing0real0AAAA\n-----END OPENSSH PRIVATE KEY-----'],
-  [5, 'DATABASE_URL=postgres://localhost/acme\nSTRIPE_KEY=sk_test_123\n']
+  [5, 'DATABASE_URL=postgres://localhost/example\nSTRIPE_KEY=sk_test_123\n']
 ])
 const secrets = [
   { id: 1, projectId: 1, serviceId: null as number | null, kind: 'text', name: 'STRIPE_SECRET_KEY', mimeType: 'text/plain', size: 32, description: 'Live mode, full access', createdAt: iso(30), updatedAt: iso(4) },
@@ -176,7 +176,7 @@ const accountSecrets = [
 ]
 const accountSecretValues = new Map<number, string>([
   [1, 'ghp_preview0nly0made0up0token0000000000'],
-  [2, 'Recovery email is the Gmail account. The SSH key for pushes lives on the MacBook.\nOrg owner of alex-labs.'],
+  [2, 'Recovery email is the Gmail account. The SSH key for pushes lives on the MacBook.\nOrg owner of example-labs.'],
   [3, 'vc_preview_0nly_made_up']
 ])
 const staged: { token: number; name: string; size: number }[] = []
