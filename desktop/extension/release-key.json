@@ -1,0 +1,5 @@
+{
+  "comment": "Public key only: it fixes the release build's extension ID while it is loaded unpacked (Chrome/Brave derive the ID from it). Not a secret, and no private key was kept: a store listing gets its own ID later (plans/06).",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqVyxlLcr61NtPhxJdm4ME37vfvJIVMqC1u1PHqNbaDQbms0yqc3e0DywsEuYU2KN0sLrgyy8enNqM+dfQQKISOyXN6in06T86cnlnGD3TDZ43akMhDl57AbRugoSTckKm05tAEIiG+8wr/3lfv+3FkNsVHxCUadDRfRYAyV4E40/VSWRjrPnRgNEh/uJJkbETSDHvW7A15+CjVERaKwY9JVyMnHgtJ4zsk6m4iF3UGSnNYjHWV7Dnhe0EoBIJOnIdmFrvgpJuEp75mrK3b/rrvaIiMZAK2VfXmyF2ic52ksnRKVADpvL35TZJugfCVp4ptJfovuiwqXiKNKnGisXVQIDAQAB",
+  "extensionId": "dddbjiemkokijpjenkbhonalpmagoajd"
+}

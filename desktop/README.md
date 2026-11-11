@@ -403,7 +403,8 @@ copy is checked byte for byte, and the current dev vault is kept in
 The schema so far: v1 accounts (the Electron app), v2 projects, services, secrets and
 account links, v3 devices, sign-in steps, account secrets and notes, v4 account groups,
 v5 several accounts per service with roles, descriptions and device-link notes, v6
-services' own logins, v7 the vault key's slots.
+services' own logins, v7 the vault key's slots, v8 the browser extension's key and
+paired browsers.
 
 ### Tests
 

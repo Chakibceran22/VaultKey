@@ -144,6 +144,15 @@ pub async fn unlock_vault(
     .await
 }
 
+/// The window is in use (the page reports activity at most every 30 s): it pushes the
+/// idle auto-lock back (`idle.rs`).
+#[tauri::command]
+pub fn vault_activity(app: AppHandle, webview: Webview) {
+    if webview.label() == MAIN_WINDOW {
+        app.state::<crate::idle::Idle>().touch();
+    }
+}
+
 #[tauri::command]
 pub async fn lock_vault(app: AppHandle, webview: Webview) -> VaultResult<()> {
     run("vault lock", app, webview, |vault| {

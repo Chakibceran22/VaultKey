@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64">
+  <!-- The 16 and 32 px cut of icon.svg: no graduations, a bolder ring and hub, so the
+       mark stays readable in the toolbar. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6672e4" />
+      <stop offset="1" stop-color="#4350c6" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="url(#tile)" />
+  <circle cx="32" cy="33" r="23" fill="none" stroke="#ffffff" stroke-width="6.5" />
+  <path d="M32 3.2l4.6 6.2h-9.2z" fill="#ffffff" />
+  <path fill="#ffffff" fill-rule="evenodd"
+    d="M32 21a12 12 0 1 1 0 24a12 12 0 1 1 0-24ZM29.9 35.6A4.2 4.2 0 1 1 34.1 35.6L35.1 41C35.2 41.9 34.7 42.5 33.9 42.5H30.1C29.3 42.5 28.8 41.9 28.9 41Z" />
+</svg>

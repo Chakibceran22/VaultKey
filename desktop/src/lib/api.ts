@@ -33,6 +33,7 @@ export const api: VaultApi = {
   createVault: (masterPassword) => call('create_vault', { masterPassword }),
   unlockVault: (masterPassword) => call('unlock_vault', { masterPassword }),
   lockVault: () => call('lock_vault'),
+  vaultActivity: () => call('vault_activity'),
   fetchDomains: () => call('fetch_domains'),
   registerDomain: (name) => call('register_domain', { name }),
   deleteDomain: (domainId) => call('delete_domain', { domainId }),
@@ -83,5 +84,10 @@ export const api: VaultApi = {
   setAccountDevices: (accountId, deviceIds) => call('set_account_devices', { accountId, deviceIds }),
   setAccountCategory: (accountId, name) => call('set_account_category', { accountId, name }),
   setAccountConnections: (accountId, { signIn, recovery, devices }) =>
-    call('set_account_connections', { accountId, signIn, recovery, devices })
+    call('set_account_connections', { accountId, signIn, recovery, devices }),
+  bridgeSettings: () => call('bridge_settings'),
+  setBridgeEnabled: (enabled) => call('set_bridge_enabled', { enabled }),
+  revokeBrowser: (browserId) => call('revoke_browser', { browserId }),
+  pendingPairing: () => call('pending_pairing'),
+  answerPairing: (id, approve) => call('answer_pairing', { id, approve })
 }

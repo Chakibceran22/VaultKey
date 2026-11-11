@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VaultKey</title>
+    <meta name="manifest.default_title" content="VaultKey" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="head">
+        <h1>VaultKey</h1>
+        <span id="badge" class="badge" data-tone="muted" role="status" aria-live="polite">Checking…</span>
+      </header>
+      <dl class="rows">
+        <div><dt>Bridge</dt><dd id="bridge">…</dd></div>
+        <div><dt>VaultKey app</dt><dd id="app">…</dd></div>
+        <div><dt>Vault</dt><dd id="vault">…</dd></div>
+        <div><dt>This browser</dt><dd id="browser">…</dd></div>
+      </dl>
+      <section id="logins" class="logins" hidden aria-label="Logins for this site">
+        <p id="site" class="site"></p>
+        <ul id="cards" class="cards"></ul>
+        <p id="logins-note" class="hint" hidden></p>
+      </section>
+      <section id="pair" class="pair" hidden>
+        <p id="pair-text" class="pair-text"></p>
+        <p id="code" class="code" hidden></p>
+        <button id="connect" class="button" type="button">Connect to VaultKey</button>
+        <button id="open-app" class="button" type="button" hidden>Open VaultKey</button>
+      </section>
+      <p id="hint" class="hint" hidden></p>
+      <button id="check" class="button secondary" type="button">Check again</button>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

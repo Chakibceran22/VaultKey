@@ -1,11 +1,14 @@
 //! VaultKey: Tauri shell around the vault service.
 
 mod account_details;
+mod bridge;
+mod browsers;
 mod commands;
 mod crypto;
 mod db;
 mod dotenv;
 mod error;
+mod idle;
 mod paths;
 mod recovery;
 mod rekey;
@@ -65,7 +68,7 @@ fn lock_vault(app: &AppHandle) {
 const LIGHT_BG: Color = Color(0xee, 0xf0, 0xf6, 0xff);
 const DARK_BG: Color = Color(0x0e, 0x10, 0x17, 0xff);
 
-fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+pub(crate) fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -156,6 +159,8 @@ pub fn run() {
                 );
             }
             app.manage(Vault::open(database_path));
+            idle::start(app.handle());
+            bridge::start(app.handle());
             create_main_window(app.handle())?;
             Ok(())
         })
@@ -212,6 +217,7 @@ pub fn run() {
             commands::create_vault,
             commands::unlock_vault,
             commands::lock_vault,
+            commands::vault_activity,
             commands::fetch_domains,
             commands::register_domain,
             commands::delete_domain,
@@ -266,6 +272,11 @@ pub fn run() {
             commands::set_account_category,
             commands::set_account_devices,
             commands::set_account_connections,
+            bridge::commands::bridge_settings,
+            bridge::commands::set_bridge_enabled,
+            bridge::commands::revoke_browser,
+            bridge::commands::pending_pairing,
+            bridge::commands::answer_pairing,
         ])
         .build(tauri::generate_context!())
         .expect("error while building VaultKey");

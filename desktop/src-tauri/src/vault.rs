@@ -13,9 +13,12 @@ use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use tokio::sync::watch;
+use vaultkey_bridge::{api, message, noise};
 use zeroize::Zeroizing;
 
 use crate::account_details::{self, AccountDetails, Connections, NewFactor, PayloadChange};
+use crate::browsers;
 use crate::crypto::{self, KdfParams, SALT_LEN, SecretKey};
 use crate::{recovery, rekey};
 use crate::db::VaultDatabase;
@@ -134,6 +137,9 @@ pub struct Vault {
     instance: Mutex<Option<fs::File>>,
     /// A recovery code shown and waiting to be confirmed.
     pending_recovery: Mutex<Option<PendingRecovery>>,
+    /// Whether the vault is unlocked, for whoever needs to hear of each change at once
+    /// (the browser extension's bridge, `bridge/`).
+    unlocked: watch::Sender<bool>,
 }
 
 #[derive(Default)]
@@ -396,6 +402,7 @@ impl Vault {
             staged: Mutex::new(Staged::default()),
             instance,
             pending_recovery: Mutex::new(None),
+            unlocked: watch::Sender::new(false),
         }
     }
 
@@ -517,6 +524,8 @@ impl Vault {
             return Err(VaultError::locked("The vault was locked during unlock."));
         }
         session.key = Some(key);
+        drop(session);
+        self.unlocked.send_replace(true);
         Ok(UnlockResult { valid: true, upgraded_backup })
     }
 
@@ -772,9 +781,11 @@ impl Vault {
         let mut session = lock_or_recover(&self.session);
         session.epoch = session.epoch.wrapping_add(1);
         session.key = None;
+        self.unlocked.send_replace(false);
         saved?;
         session.key = Some(vault_key);
         drop(session);
+        self.unlocked.send_replace(true);
         *lock_or_recover(&self.pending_recovery) = None;
         Ok(())
     }
@@ -814,6 +825,7 @@ impl Vault {
         session.key = None;
         session.epoch = session.epoch.wrapping_add(1);
         drop(session);
+        self.unlocked.send_replace(false);
         // Nothing waits to be imported into a locked vault.
         *lock_or_recover(&self.staged) = Staged::default();
         *lock_or_recover(&self.dropped) = None;
@@ -1773,6 +1785,193 @@ impl Vault {
     }
 }
 
+// ── the browser extension (schema v8) ───────────────────────────────────────
+
+/// A browser paired with the extension, as Settings lists it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedBrowser {
+    pub id: i64,
+    pub name: String,
+    pub created_at: String,
+    pub last_seen_at: String,
+}
+
+impl Vault {
+    /// Locked or unlocked, now and at each change.
+    pub fn watch_unlocked(&self) -> watch::Receiver<bool> {
+        self.unlocked.subscribe()
+    }
+
+    /// Whether the vault is unlocked, and how many times it was locked: a lock and an
+    /// unlock in quick succession still count as one more lock.
+    pub fn lock_state(&self) -> (bool, u64) {
+        let session = lock_or_recover(&self.session);
+        (session.key.is_some(), session.epoch)
+    }
+
+    /// Whether "Browser extension" is on. Readable while locked: it decides whether the
+    /// app listens for the extension at all.
+    pub fn bridge_enabled(&self) -> VaultResult<bool> {
+        self.with_database(|db| Ok(browsers::read_settings(db.connection())?.is_some_and(|settings| settings.enabled)))
+    }
+
+    /// Turns "Browser extension" on or off. The first time it's on, VaultKey's own key
+    /// pair for the channel is made; turning it off keeps the key, so browsers paired
+    /// before connect again when it's back on.
+    pub fn set_bridge_enabled(&self, enabled: bool) -> VaultResult<()> {
+        let key = self.session_key()?;
+        self.with_database(|db| {
+            db.transaction(|tx| match browsers::read_settings(tx)? {
+                Some(_) => browsers::set_enabled(tx, enabled),
+                None if enabled => {
+                    let (private, _) = noise::generate_keypair();
+                    browsers::create_settings(tx, &crypto::encrypt_bytes(&private[..], &key)?)
+                }
+                None => Ok(()),
+            })
+        })
+    }
+
+    /// VaultKey's private key for the channel (on and unlocked only).
+    pub fn bridge_private_key(&self) -> VaultResult<noise::PrivateKey> {
+        let key = self.session_key()?;
+        let settings = self
+            .with_database(|db| browsers::read_settings(db.connection()))?
+            .filter(|settings| settings.enabled)
+            .ok_or_else(|| VaultError::not_found("The browser extension is off."))?;
+        let opened = crypto::decrypt_bytes(&settings.private_key, &key)?;
+        let mut private = Zeroizing::new([0; noise::KEY_LEN]);
+        if opened.len() != private.len() {
+            return Err(VaultError::internal("The browser extension's key is damaged."));
+        }
+        private.copy_from_slice(&opened);
+        Ok(private)
+    }
+
+    /// A paired browser's public key, by the client id it opens sessions with.
+    pub fn paired_browser_key(&self, client_id: &noise::ClientId) -> VaultResult<Option<noise::PublicKey>> {
+        let key = self.session_key()?;
+        let Some(sealed) = self.with_database(|db| browsers::client_key(db.connection(), client_id))? else {
+            return Ok(None);
+        };
+        let opened = crypto::decrypt_bytes(&sealed, &key)?;
+        let public: noise::PublicKey = opened
+            .as_slice()
+            .try_into()
+            .map_err(|_| VaultError::internal("A paired browser's key is damaged."))?;
+        // Found by its id: the id must be this key's.
+        Ok((noise::client_id(&public) == *client_id).then_some(public))
+    }
+
+    /// Saves a browser the user just approved in the pairing dialog.
+    pub fn pair_browser(&self, public_key: &noise::PublicKey, name: &str) -> VaultResult<()> {
+        let key = self.session_key()?;
+        if !message::valid_name(name) {
+            return Err(VaultError::invalid_input("That browser name can't be shown."));
+        }
+        let client_id = noise::client_id(public_key);
+        let sealed_key = crypto::encrypt_bytes(public_key, &key)?;
+        let sealed_name = crypto::encrypt_bytes(name.as_bytes(), &key)?;
+        self.with_database(|db| browsers::save_client(db.connection(), &client_id, &sealed_key, &sealed_name))
+    }
+
+    pub fn paired_browsers(&self) -> VaultResult<Vec<PairedBrowser>> {
+        let key = self.session_key()?;
+        let rows = self.with_database(|db| browsers::list_clients(db.connection()))?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(PairedBrowser {
+                    id: row.id,
+                    name: String::from_utf8_lossy(&crypto::decrypt_bytes(&row.name, &key)?).into_owned(),
+                    created_at: row.created_at,
+                    last_seen_at: row.last_seen_at,
+                })
+            })
+            .collect()
+    }
+
+    /// Removes a pairing: that browser has to pair again.
+    pub fn revoke_browser(&self, id: i64) -> VaultResult<()> {
+        self.require_unlocked()?;
+        let id = validate_id(id, "browser id")?;
+        if !self.with_database(|db| browsers::delete_client(db.connection(), id))? {
+            return Err(VaultError::not_found("That browser isn't paired."));
+        }
+        Ok(())
+    }
+
+    /// Undoes a pairing the browser never heard was approved (it had given up waiting).
+    /// Needs no key: it only removes a row.
+    pub fn forget_browser(&self, public_key: &noise::PublicKey) -> VaultResult<()> {
+        self.with_database(|db| browsers::delete_client_by_client_id(db.connection(), &noise::client_id(public_key)))
+    }
+
+    /// Paired browsers' names by client id (for "Recent fills").
+    pub fn paired_browser_names(&self) -> VaultResult<std::collections::HashMap<noise::ClientId, String>> {
+        let key = self.session_key()?;
+        let rows = self.with_database(|db| browsers::list_clients(db.connection()))?;
+        rows.into_iter()
+            .filter_map(|row| Some((noise::ClientId::try_from(row.client_id.as_slice()).ok()?, row.name)))
+            .map(|(client, name)| Ok((client, String::from_utf8_lossy(&crypto::decrypt_bytes(&name, &key)?).into_owned())))
+            .collect()
+    }
+
+    /// Changes whenever the database does: this process is its only writer, through this
+    /// one connection. The extension's match index is rebuilt when it moves.
+    pub fn revision(&self) -> VaultResult<u64> {
+        self.with_database(|db| Ok(db.connection().total_changes()))
+    }
+
+    /// Every account, for the extension's matcher: websites and names only, nothing
+    /// decrypted.
+    pub fn extension_accounts(&self) -> VaultResult<Vec<api::Account>> {
+        self.require_unlocked()?;
+        self.with_database(|db| {
+            let conn = db.connection();
+            let with_codes = browsers::accounts_with_authenticator(conn)?;
+            Ok(store::list_accounts(conn)?
+                .into_iter()
+                .map(|account| api::Account {
+                    has_totp: with_codes.contains(&account.id),
+                    id: account.id,
+                    website: account.domain_name,
+                    email: account.email,
+                    username: account.username,
+                    has_password: account.has_password,
+                })
+                .collect())
+        })
+    }
+
+    /// One account's login, decrypted for one fill (the extension asked with a handle the
+    /// bridge checked against the page).
+    pub fn extension_login(&self, account: i64) -> VaultResult<Option<api::Login>> {
+        let key = self.session_key()?;
+        let Some(row) = self.with_database(|db| browsers::login(db.connection(), account))? else {
+            return Ok(None);
+        };
+        let password = crypto::decrypt(&row.password, &key)?;
+        Ok(Some(api::Login { email: row.email, username: row.username, password }))
+    }
+
+    /// One account's current authenticator code, if it has a setup key.
+    pub fn extension_code(&self, account: i64) -> VaultResult<Option<api::AuthCode>> {
+        self.require_unlocked()?;
+        let Some(factor) = self.with_database(|db| browsers::authenticator_of(db.connection(), account))? else {
+            return Ok(None);
+        };
+        let code = self.factor_code(factor)?;
+        Ok(Some(api::AuthCode { code: code.code.clone(), expires_at: code.expires_at }))
+    }
+
+    /// A paired browser just opened a session ("last used").
+    pub fn browser_seen(&self, client_id: &noise::ClientId) -> VaultResult<()> {
+        self.require_unlocked()?;
+        self.with_database(|db| browsers::touch_client(db.connection(), client_id))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2404,6 +2603,7 @@ mod tests {
             staged: Mutex::new(Staged::default()),
             instance: Mutex::new(None),
             pending_recovery: Mutex::new(None),
+            unlocked: watch::Sender::new(false),
         };
         assert!(vault.unlock(ASCII_PASSWORD).unwrap().valid);
         let domain = vault.list_domains().unwrap().domains[0].id;
@@ -3665,5 +3865,123 @@ mod tests {
             kdf.parallelism
         );
         database.close();
+    }
+
+    #[test]
+    fn the_browser_extension_keys_and_pairings() {
+        let (_directory, vault) = unlocked_vault();
+        // Off until turned on; no key yet.
+        assert!(!vault.bridge_enabled().unwrap());
+        assert_eq!(vault.bridge_private_key().unwrap_err().code, ErrorCode::NotFound);
+
+        vault.set_bridge_enabled(true).unwrap();
+        assert!(vault.bridge_enabled().unwrap());
+        let key = vault.bridge_private_key().unwrap();
+        // Off and on again keeps the same key, so paired browsers still connect.
+        vault.set_bridge_enabled(false).unwrap();
+        assert!(!vault.bridge_enabled().unwrap());
+        assert!(vault.bridge_private_key().is_err());
+        vault.set_bridge_enabled(true).unwrap();
+        assert_eq!(*vault.bridge_private_key().unwrap(), *key);
+
+        let browser = noise::public_key(&[7; 32]);
+        let client = noise::client_id(&browser);
+        assert_eq!(vault.paired_browser_key(&client).unwrap(), None);
+        vault.pair_browser(&browser, "Brave on macOS").unwrap();
+        assert_eq!(vault.paired_browser_key(&client).unwrap(), Some(browser));
+        // Pairing the same browser again keeps one row, with the new name.
+        vault.pair_browser(&browser, "Brave on MacBook").unwrap();
+        let listed = vault.paired_browsers().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Brave on MacBook");
+        assert!(vault.pair_browser(&browser, " untrimmed").is_err());
+        vault.browser_seen(&client).unwrap();
+
+        // Sealed at rest: neither the key nor the name is in the file as is.
+        let conn = vault.with_database(|db| {
+            let row: (Vec<u8>, Vec<u8>) = db.connection().query_row(
+                "SELECT public_key, name FROM browser_clients",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            Ok(row)
+        });
+        let (sealed_key, sealed_name) = conn.unwrap();
+        assert!(!sealed_key.windows(32).any(|w| w == browser));
+        assert!(!sealed_name.windows(5).any(|w| w == b"Brave"));
+
+        // Locked: nothing but whether it's on.
+        vault.lock();
+        assert!(vault.bridge_enabled().unwrap());
+        assert!(vault.bridge_private_key().is_err());
+        assert!(vault.paired_browser_key(&client).is_err());
+        assert!(vault.paired_browsers().is_err());
+        assert!(vault.set_bridge_enabled(false).is_err());
+
+        assert!(vault.unlock(MASTER).unwrap().valid);
+        vault.revoke_browser(listed[0].id).unwrap();
+        vault.pair_browser(&browser, "Brave on macOS").unwrap();
+        vault.forget_browser(&browser).unwrap();
+        assert!(vault.paired_browsers().unwrap().is_empty());
+        assert_eq!(vault.paired_browser_key(&client).unwrap(), None);
+        assert_eq!(vault.revoke_browser(listed[0].id).unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
+    fn what_the_extension_reads() {
+        let (_directory, vault) = unlocked_vault();
+        let github = vault.create_domain("github.com").unwrap();
+        let account = vault.create_credential(credential(github, "me@x.com", "hunter2")).unwrap();
+        let other = vault.create_credential(credential(github, "other@x.com", "pw")).unwrap();
+        vault
+            .create_factor(account, FactorInput { kind: "authenticator".into(), label: String::new(), device_id: None, secret: Some("JBSWY3DPEHPK3PXP".into()) })
+            .unwrap();
+        // A passkey has no setup key: no code from it.
+        vault.create_factor(other, FactorInput { kind: "passkey".into(), label: String::new(), device_id: None, secret: None }).unwrap();
+
+        let before = vault.revision().unwrap();
+        let accounts = vault.extension_accounts().unwrap();
+        assert_eq!(vault.revision().unwrap(), before, "reading changes nothing");
+        let mine = accounts.iter().find(|a| a.id == account).unwrap();
+        assert_eq!((mine.website.as_str(), mine.email.as_str(), mine.has_password, mine.has_totp), ("github.com", "me@x.com", true, true));
+        assert!(!accounts.iter().find(|a| a.id == other).unwrap().has_totp);
+
+        let login = vault.extension_login(account).unwrap().unwrap();
+        assert_eq!((login.email.as_str(), login.username.as_deref(), login.password.as_str()), ("me@x.com", Some("alice"), "hunter2"));
+        assert!(vault.extension_login(9999).unwrap().is_none());
+        let code = vault.extension_code(account).unwrap().unwrap();
+        assert!(code.code.len() == 6 && code.code.bytes().all(|b| b.is_ascii_digit()));
+        assert!(vault.extension_code(other).unwrap().is_none());
+
+        vault.create_credential(credential(github, "third@x.com", "x")).unwrap();
+        assert!(vault.revision().unwrap() > before, "a write moves the revision");
+
+        vault.lock();
+        assert!(vault.extension_accounts().is_err());
+        assert!(vault.extension_login(account).is_err());
+        assert!(vault.extension_code(account).is_err());
+    }
+
+    #[test]
+    fn locking_and_unlocking_are_heard_at_once() {
+        let (_directory, vault) = unlocked_vault();
+        let mut unlocked = vault.watch_unlocked();
+        assert!(*unlocked.borrow_and_update());
+        vault.lock();
+        assert!(unlocked.has_changed().unwrap());
+        assert!(!*unlocked.borrow_and_update());
+        assert!(vault.unlock(MASTER).unwrap().valid);
+        assert!(*unlocked.borrow_and_update());
+        // Every lock counts, even one undone at once.
+        let (open, locks) = vault.lock_state();
+        assert!(open);
+        vault.lock();
+        assert!(vault.unlock(MASTER).unwrap().valid);
+        assert_eq!(vault.lock_state(), (true, locks + 1));
+        // A wrong password changes nothing.
+        vault.lock();
+        unlocked.borrow_and_update();
+        assert!(!vault.unlock("not the password").unwrap().valid);
+        assert!(!unlocked.has_changed().unwrap());
     }
 }

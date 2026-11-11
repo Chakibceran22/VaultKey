@@ -1,0 +1,4 @@
+# WXT's generated types and build output.
+.wxt
+.output
+stats.html

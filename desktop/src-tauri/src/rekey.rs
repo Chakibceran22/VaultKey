@@ -60,6 +60,9 @@ pub const ENCRYPTED: &[EncryptedColumn] = &[
     encrypted("service_logins", "username", Format::Sealed, "a service login"),
     encrypted("service_logins", "password", Format::Sealed, "a service login's password"),
     encrypted("service_logins", "note", Format::Sealed, "a service login's note"),
+    encrypted("bridge_settings", "private_key", Format::Sealed, "the browser extension's key"),
+    encrypted("browser_clients", "public_key", Format::Sealed, "a paired browser's key"),
+    encrypted("browser_clients", "name", Format::Sealed, "a paired browser's name"),
 ];
 
 /// Every other column, by table: never encrypted with the vault key. (The KDF salts and
@@ -89,6 +92,8 @@ pub const PLAIN: &[(&str, &[&str])] = &[
     ("account_categories", &["account_id", "name", "updated_at"]),
     ("service_accounts", &["service_id", "account_id", "position", "created_at", "updated_at"]),
     ("service_logins", &["id", "service_id", "position", "created_at", "updated_at"]),
+    ("bridge_settings", &["id", "enabled", "created_at", "updated_at"]),
+    ("browser_clients", &["id", "client_id", "created_at", "last_seen_at"]),
     (
         "key_slots",
         &[
@@ -376,6 +381,8 @@ mod tests {
         vault
             .import_staged(project, None, &[StagedFileInput { token, description: "deploy key".into(), name: None }])
             .unwrap();
+        vault.set_bridge_enabled(true).unwrap();
+        vault.pair_browser(&vaultkey_bridge::noise::public_key(&[5; 32]), "Brave on macOS").unwrap();
         (vault, secret)
     }
 
@@ -500,7 +507,7 @@ mod tests {
         let key = vault_key(&path, OLD);
         assert!(!crypto::same_key(&key, &password_key(&path, OLD)));
         let plain = plaintexts(&path, &key);
-        assert!(plain.len() >= 13);
+        assert!(plain.len() >= 16);
         assert!(unreadable(&Connection::open(&path).unwrap(), &password_key(&path, OLD)).unwrap().len() == plain.len());
         let status = vault.security_status().unwrap();
         assert!(status.vault_key && !status.recovery_code && status.waiting_on.is_empty());

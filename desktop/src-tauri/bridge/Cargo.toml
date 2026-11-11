@@ -1,0 +1,52 @@
+[package]
+name = "vaultkey-bridge"
+version = "0.1.0"
+description = "VaultKey's native-messaging host for the browser extension, and the framing, addresses, messages and encrypted channel it shares with the app"
+authors = ["Chakib Ceran"]
+edition = "2024"
+publish = false
+
+[lib]
+name = "vaultkey_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vaultkey-bridge"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Already in the app's tree (through Tauri); `net` adds Unix sockets / named pipes.
+tokio = { version = "1", features = ["rt", "io-util", "io-std", "net", "sync", "time", "macros"] }
+# The extension ↔ app channel (plans/02): Noise KK, 25519 / AES-GCM / SHA-256. Without
+# snow's `std` feature, which would also switch on `ring`; aes-gcm and sha2 are already
+# in the app's tree. `use-chacha20poly1305` is unused, but snow 0.10.0's AES-GCM code
+# only compiles with it (it brings the `KeyInit` import the AES code relies on).
+snow = { version = "0.10", default-features = false, features = ["use-aes-gcm", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
+sha2 = "0.10"
+base64 = "0.22"
+zeroize = "1"
+# Matching pages to saved websites (plans/04): URL parsing with IDNA (already in the app's
+# tree), and the Public Suffix List, private section included, compiled in.
+url = "2"
+psl = "2"
+# Opaque handles (already in the tree through snow).
+getrandom = "0.3"
+
+# The named pipe's current-user-only DACL and the server-owner check (plans/06, M1).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+] }
+# The browsers' native-host registry keys (HKCU only).
+winreg = "0.56"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "io-util", "io-std", "net", "sync", "time", "macros", "process", "test-util"] }

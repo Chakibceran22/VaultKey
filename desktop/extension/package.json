@@ -1,0 +1,22 @@
+{
+  "name": "vaultkey-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "VaultKey in the browser: fill your logins from the desktop app",
+  "type": "module",
+  "scripts": {
+    "build": "wxt build",
+    "build:dev": "wxt build --mode development",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run",
+    "register-host": "node scripts/register-dev-host.mjs",
+    "unregister-host": "node scripts/register-dev-host.mjs --remove"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.6",
+    "typescript": "^5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.12",
+    "wxt": "0.21.5"
+  }
+}

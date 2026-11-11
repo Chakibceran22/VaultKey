@@ -1,0 +1,172 @@
+/* VaultKey's tokens (desktop/src/assets/main.css), light and dark. No color-scheme
+   declaration: the frame stays transparent where the panel isn't (a scheme different from
+   the page's would make the browser paint a backdrop behind it). */
+:root {
+  --background: #ffffff;
+  --foreground: #34374c;
+  --heading: #1b1d2e;
+  --muted: #696d86;
+  --border: rgb(60 66 110 / 0.13);
+  --hover: rgb(79 91 213 / 0.08);
+  --primary: #4f5bd5;
+  --bad: #c0453f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #171a24;
+    --foreground: #c8cbdb;
+    --heading: #f0f1f7;
+    --muted: #8b8fa6;
+    --border: rgb(220 225 255 / 0.12);
+    --hover: rgb(143 152 245 / 0.14);
+    --primary: #8f98f5;
+    --bad: #e07a73;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* The frame is always 8 rows tall; the panel takes what it needs, at the top (or at the
+   bottom when the menu opens above the field). */
+body {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 0 1px;
+}
+
+body.above {
+  justify-content: flex-end;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+  box-shadow: 0 8px 24px rgb(15 18 40 / 0.2);
+  color: var(--foreground);
+  font:
+    13px/1.35 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row[aria-selected='true'],
+.row:hover {
+  background: var(--hover);
+}
+
+.tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--primary);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.text {
+  min-width: 0;
+  flex: 1;
+}
+
+.name,
+.where {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name {
+  color: var(--heading);
+}
+
+.where {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.message {
+  padding: 8px 10px;
+  color: var(--foreground);
+}
+
+.message.bad {
+  color: var(--bad);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.link {
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.button {
+  margin: 0 10px 8px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}

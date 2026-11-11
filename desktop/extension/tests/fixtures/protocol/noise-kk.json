@@ -1,0 +1,43 @@
+{
+  "app": {
+    "ephemeral": "28c0d45b2b3812eee584522806084a7e97467ee9cc4ce12ac1804c5566f1ee81",
+    "ephemeralPublic": "9e707dcd29556ebffcb88b55a07f514d1f0fa721fcaac8a51035f80d2f19de2d",
+    "static": "c0ada58e151b6a1f41841c140f88d32e8b97177fb288f1f6e71af19ca7b58486",
+    "staticPublic": "8d34894ad9226aa069cf1e772e7aca5b06befc76abec2810378a201c35ef3729"
+  },
+  "clientId": "d5f3f3b4ca2bbb5f7a1a42fa0cc96502",
+  "comment": "Written by src-tauri/bridge/src/noise.rs (the_extension_vectors_are_current) with snow; checked by tests/noise.test.ts. Keys are SHA-256 of fixed labels: test values only.",
+  "extension": {
+    "ephemeral": "2e761cc97f80d9e027fd21328401c45577dea3b0491b6a8684fc90130a5b0747",
+    "ephemeralPublic": "df1d6f6be35705da9009ef421c5fecdf19e25ac9bee181b4561cf0ad5a415941",
+    "static": "09bf238c7dd2927a3da00263857ba4588f7dbb895286d4c5d4ad85186116747a",
+    "staticPublic": "2c3cb8ce4dcfdcd1e1a1bddc50eebf596ddb44b579a6be081e638d6836112c30"
+  },
+  "message1": "df1d6f6be35705da9009ef421c5fecdf19e25ac9bee181b4561cf0ad5a415941c19a189a8c533c60695c6c3a1b5467fc",
+  "message2": "9e707dcd29556ebffcb88b55a07f514d1f0fa721fcaac8a51035f80d2f19de2dcbbf5356137f62b41be7daf55eb1346c",
+  "pairingCode": "482952",
+  "prologue": "vaultkey-bridge/1",
+  "protocol": "Noise_KK_25519_AESGCM_SHA256",
+  "transport": [
+    {
+      "ciphertext": "275aeb0abb62c4e514045cc678bcb105582acc15aff03bde1b8e4db58c762a74c2cbff",
+      "from": "extension",
+      "plaintext": "{\"id\":1,\"m\":\"ping\"}"
+    },
+    {
+      "ciphertext": "20763f66f2ed152508acd1ddfda3e3f7b8781f88dc01c99b484e4d47a9b211edef016261386575819e",
+      "from": "app",
+      "plaintext": "{\"id\":1,\"ok\":true,\"r\":{}}"
+    },
+    {
+      "ciphertext": "295dacad3f9c71dba64ddbe1f96c0826169fd45b8623136ee1375f0b17e289c1cbad4b",
+      "from": "extension",
+      "plaintext": "{\"id\":2,\"m\":\"ping\"}"
+    },
+    {
+      "ciphertext": "1e7be8ca66943394ed8a9400c90948e67dc4dd1f4f4b5934922e86dd79ed20",
+      "from": "app",
+      "plaintext": "{\"ev\":\"locked\"}"
+    }
+  ]
+}

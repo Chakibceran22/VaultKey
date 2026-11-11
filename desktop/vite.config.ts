@@ -23,6 +23,10 @@ export default defineConfig(() => ({
   // the project page), Vite bundles them in a second pass with their own copy of
   // React, which breaks hooks ("Invalid hook call") until a manual reload.
   optimizeDeps: {
+    // Scan from the app's own page only. `extension/` (the browser extension, a separate
+    // WXT build with its own `@/` alias) sits under this root too; scanning its pages
+    // fails, and a failed scan skips this pre-bundling.
+    entries: ['index.html'],
     include: [
       '@base-ui/react/alert-dialog',
       '@base-ui/react/dialog',
@@ -52,8 +56,8 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ['**/src-tauri/**']
+      // 3. tell Vite to ignore watching `src-tauri`, and the browser extension (built by WXT)
+      ignored: ['**/src-tauri/**', '**/extension/**']
     }
   }
 }))

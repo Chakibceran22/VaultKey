@@ -73,7 +73,9 @@ jobs:
 
       - name: Install dependencies
         working-directory: desktop
-        run: pnpm install --frozen-lockfile
+        # The desktop app only: the browser extension (a workspace package) isn't part of
+        # this build, so its toolchain stays out of the release job.
+        run: pnpm install --frozen-lockfile --filter vaultkey
 
       - uses: tauri-apps/tauri-action@v0
         env:

@@ -13,7 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [workspace]
 # `search`: the graph search engine (models only behind its `meaning` feature), free of Tauri and the database so
 # it builds and is evaluated on its own (docs/graph-search.md).
-members = ["search"]
+# `bridge`: the browser extension's native-messaging host, and the framing and addresses the
+# app shares with it (extension/plans/).
+members = ["search", "bridge"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -24,6 +26,11 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# The browser extension's link (extension/plans/): the app listens, the bridge connects.
+vaultkey-bridge = { path = "bridge" }
+# Already in the tree (Tauri's runtime): lock and unlock reach the bridge at once (`watch`).
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 
 # Embedded SQLite (bundled, so the app never depends on the system library version).
 rusqlite = { version = "0.41", features = ["bundled"] }

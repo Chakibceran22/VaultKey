@@ -9,6 +9,8 @@ lerna-debug.log*
 # docs/ stays local, except the README's screenshots.
 docs/*
 !docs/screenshots/
+# extension/plans/ stays local too: the browser extension's planning notes.
+extension/plans/
 
 node_modules
 dist

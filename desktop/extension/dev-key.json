@@ -1,0 +1,5 @@
+{
+  "comment": "Public key only: it fixes the dev build's extension ID (Chrome/Brave derive the ID from it). Not a secret.",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoPeIZRyrmL0AiC7F9BtdWfEe+2e/jNb3GltXxDDvza2S51uOlmebG9Vavv4IIeljyESB2hEe/R7GpCjlEYE0nm5dKmP3PDM/Izinsoh9V7OQRg6N4s6RirVUR9miNRqrpCUfwWU6zNd+67GxecVz40YV9MlIOlfAQP3mlbjL5LJpGI+s+IR/65hlK3/F6bX69L4YONm1gc1ia048eRmy060r9M6i0r+G5kezHKgeQ04z3irw/zKVjuM6mfNgXtFMukG4ryxT03r+YkdA3XoTneub4MpH0NfwecJ1PX/rwMOQ8F34jUWjSfXDAaBk+vIbQroR04VS5iSBp0vP5oTtuQIDAQAB",
+  "extensionId": "djicgglacmoknplomflnngemodfomkkg"
+}

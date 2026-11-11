@@ -1,0 +1,73 @@
+{
+  "comment": "The exact JSON of the encrypted inner layer (plans/03-protocol.md). Checked by src-tauri/bridge/src/{inner,api}.rs and tests/messages.test.ts: a change on one side without the other fails a test. `samples`: the shape of each result (Rust checks its real results have exactly these keys and value types; the extension's guards accept them).",
+  "exchanges": [
+    {
+      "request": "{\"id\":1,\"m\":\"ping\"}",
+      "reply": "{\"id\":1,\"ok\":true,\"r\":{}}"
+    },
+    {
+      "request": "{\"id\":2,\"m\":\"reveal\",\"p\":{\"h\":\"x\"}}",
+      "reply": "{\"id\":2,\"ok\":false,\"e\":{\"code\":\"BAD_REQUEST\",\"msg\":\"Unknown method or parameters.\"}}"
+    },
+    {
+      "request": "{\"id\":4294967295,\"m\":\"ping\",\"p\":{}}",
+      "reply": "{\"id\":4294967295,\"ok\":false,\"e\":{\"code\":\"BAD_REQUEST\",\"msg\":\"Unknown method or parameters.\"}}"
+    }
+  ],
+  "events": [
+    "{\"ev\":\"locked\"}",
+    "{\"ev\":\"revoked\"}"
+  ],
+  "refusedRequests": [
+    "{\"id\":1,\"m\":\"ping\",\"extra\":true}",
+    "{\"m\":\"ping\"}",
+    "{\"id\":-1,\"m\":\"ping\"}",
+    "{\"id\":4294967296,\"m\":\"ping\"}",
+    "{\"id\":1.5,\"m\":\"ping\"}",
+    "{\"id\":1}",
+    "[1,\"ping\"]",
+    "null"
+  ],
+  "samples": {
+    "match": {
+      "site": {
+        "host": "github.com",
+        "registrable": "github.com"
+      },
+      "cards": [
+        {
+          "h": "AAAAAAAAAAAAAAAAAAAAAA==",
+          "kind": "account",
+          "title": "github.com",
+          "host": "github.com",
+          "email": "me@x.com",
+          "username": null,
+          "method": "password",
+          "tier": "exact",
+          "hasTotp": true,
+          "signsInWith": [],
+          "lastUsed": null
+        }
+      ],
+      "insecure": 0
+    },
+    "reveal": {
+      "email": "me@x.com",
+      "username": "me",
+      "password": "password-1"
+    },
+    "totp": {
+      "code": "123456",
+      "expiresAt": 1700000030000
+    }
+  },
+  "errorCodes": [
+    "BAD_REQUEST",
+    "UNKNOWN_HANDLE",
+    "ORIGIN_MISMATCH",
+    "NO_SECRET",
+    "RATE_LIMITED",
+    "LOCKED",
+    "INTERNAL"
+  ]
+}

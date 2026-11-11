@@ -1,0 +1,68 @@
+{
+  "comment": "The exact JSON of every plaintext message (plans/03-protocol.md, outer layer). Checked by src-tauri/bridge/src/message.rs and tests/messages.test.ts: a change on one side without the other fails a test. `x` travels both ways, so it is in both lists.",
+  "hostNames": {
+    "release": "com.chakibceran22.vaultkey",
+    "dev": "com.chakibceran22.vaultkey.dev"
+  },
+  "extensionIds": {
+    "release": "dddbjiemkokijpjenkbhonalpmagoajd",
+    "dev": "djicgglacmoknplomflnngemodfomkkg"
+  },
+  "fromExtension": [
+    "{\"t\":\"bridge.status\"}",
+    "{\"t\":\"ping\",\"n\":7}",
+    "{\"t\":\"app.show\"}",
+    "{\"t\":\"pair.request\",\"pub\":\"A8Bkp5WvjD8+cFeuqHFJmJCRJTGCkeIzA/Fqr6GmjiI=\",\"name\":\"Brave on macOS\",\"browser\":\"brave\",\"protocol\":1}",
+    "{\"t\":\"hs1\",\"client\":\"AAECAwQFBgcICQoLDA0ODw==\",\"msg\":\"AA==\",\"protocol\":1}",
+    "{\"t\":\"x\",\"c\":\"AA==\"}"
+  ],
+  "toExtension": [
+    "{\"t\":\"bridge.state\",\"app\":\"running\"}",
+    "{\"t\":\"bridge.state\",\"app\":\"not_running\"}",
+    "{\"t\":\"state\",\"state\":\"locked\",\"protocol\":1}",
+    "{\"t\":\"state\",\"state\":\"unlocked\",\"protocol\":1}",
+    "{\"t\":\"state\",\"state\":\"disabled\",\"protocol\":1}",
+    "{\"t\":\"pong\",\"n\":7}",
+    "{\"t\":\"pair.pending\",\"pub\":\"A8Bkp5WvjD8+cFeuqHFJmJCRJTGCkeIzA/Fqr6GmjiI=\"}",
+    "{\"t\":\"pair.result\",\"approved\":true}",
+    "{\"t\":\"pair.result\",\"approved\":false}",
+    "{\"t\":\"hs2\",\"msg\":\"AA==\"}",
+    "{\"t\":\"x\",\"c\":\"AA==\"}",
+    "{\"t\":\"err\",\"code\":\"BAD_FRAME\"}",
+    "{\"t\":\"err\",\"code\":\"NOT_PAIRED\"}",
+    "{\"t\":\"err\",\"code\":\"LOCKED\"}",
+    "{\"t\":\"err\",\"code\":\"DISABLED\"}",
+    "{\"t\":\"err\",\"code\":\"BUSY\"}",
+    "{\"t\":\"err\",\"code\":\"INTERNAL\"}",
+    "{\"t\":\"err\",\"code\":\"PROTOCOL_VERSION\",\"need\":\"update_app\"}",
+    "{\"t\":\"err\",\"code\":\"PROTOCOL_VERSION\",\"need\":\"update_extension\"}"
+  ],
+  "refused": [
+    "{\"t\":\"ping\",\"n\":1,\"extra\":true}",
+    "{\"t\":\"bridge.status\",\"extra\":true}",
+    "{\"t\":\"app.show\",\"x\":1}",
+    "{\"t\":\"pong\",\"n\":1,\"extra\":true}",
+    "{\"t\":\"state\",\"state\":\"open\",\"protocol\":1}",
+    "{\"t\":\"ping\"}",
+    "{\"t\":\"pong\",\"n\":-1}",
+    "{\"t\":\"pong\",\"n\":4294967296}",
+    "{\"t\":\"pong\",\"n\":1.5}",
+    "{\"t\":\"reveal\",\"h\":\"x\"}",
+    "{\"t\":\"pair.request\",\"pub\":\"AA==\",\"name\":\"x\",\"browser\":\"netscape\",\"protocol\":1}",
+    "{\"t\":\"pair.request\",\"pub\":\"AA==\",\"name\":\"x\",\"protocol\":1}",
+    "{\"t\":\"pair.result\",\"approved\":\"yes\"}",
+    "{\"t\":\"pair.pending\"}",
+    "{\"t\":\"hs1\",\"client\":\"AA==\"}",
+    "{\"t\":\"hs1\",\"client\":\"AA==\",\"msg\":\"AA==\"}",
+    "{\"t\":\"hs2\",\"msg\":7}",
+    "{\"t\":\"x\"}",
+    "{\"t\":\"x\",\"c\":\"AA==\",\"n\":1}",
+    "{\"t\":\"err\",\"code\":\"NOPE\"}",
+    "{\"t\":\"err\",\"code\":\"PROTOCOL_VERSION\",\"need\":\"update_everything\"}",
+    "{\"n\":1}",
+    "[\"ping\",7]",
+    "[\"bridge.status\"]",
+    "[]",
+    "null"
+  ]
+}

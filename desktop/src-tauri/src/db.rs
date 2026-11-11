@@ -111,6 +111,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "vault-key-slots",
         sql: include_str!("migrations/0007_vault_key.sql"),
     },
+    Migration {
+        version: 8,
+        name: "browser-extension",
+        sql: include_str!("migrations/0008_browser_extension.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.

@@ -342,12 +342,69 @@ export interface EnvSecretInput {
   replace: number | null
 }
 
+/** Settings → Browser extension (src-tauri/src/bridge/mod.rs). */
+export interface BrowserStatus {
+  name: string
+  installed: boolean
+  /** VaultKey's bridge is registered with it, and current. */
+  registered: boolean
+}
+
+/** A browser paired with the extension. Its key stays in Rust. */
+export interface PairedBrowser {
+  id: number
+  name: string
+  createdAt: string
+  lastSeenAt: string
+}
+
+/** A login or code the extension filled (memory only, cleared on lock). */
+export interface RecentFill {
+  at: string
+  browser: string
+  /** "github.com · me@x.com" */
+  account: string
+  /** The page it was filled on. */
+  site: string
+  what: 'login' | 'code'
+}
+
+export interface BridgeSettings {
+  enabled: boolean
+  /** On and listening (false: it couldn't start; "Try again" restarts it). */
+  listening: boolean
+  /** This build includes the bridge program the browsers start. */
+  available: boolean
+  /** A dev build: it pairs with the dev extension only. */
+  dev: boolean
+  browsers: BrowserStatus[]
+  paired: PairedBrowser[]
+  /** Newest first. */
+  recent: RecentFill[]
+}
+
+/** How a pairing dialog ended: `paired` once the browser is saved and knows it. */
+export interface PairingEnded {
+  id: number
+  paired: boolean
+}
+
+/** A browser asking to pair: VaultKey shows the code its popup shows too. */
+export interface PairingPrompt {
+  id: number
+  name: string
+  browser: string
+  code: string
+}
+
 export interface VaultApi {
   getVaultStatus: () => Promise<IpcResult<VaultStatusResponse>>
   createVault: (masterPassword: string) => Promise<IpcResult<void>>
   /** `upgradedBackup`: this unlock moved an older vault to its vault key; the backup of it as it was. */
   unlockVault: (masterPassword: string) => Promise<IpcResult<{ valid: boolean; upgradedBackup?: string }>>
   lockVault: () => Promise<IpcResult<void>>
+  /** The window is in use: pushes the idle auto-lock (5 minutes) back. */
+  vaultActivity: () => Promise<IpcResult<void>>
   /** Wraps the vault key with a new master password (the data doesn't change; the recovery code keeps working). */
   changeMasterPassword: (currentPassword: string, newPassword: string) => Promise<IpcResult<void>>
   securityStatus: () => Promise<IpcResult<SecurityStatus>>
@@ -425,4 +482,12 @@ export interface VaultApi {
     accountId: number,
     connections: { signIn: number[]; recovery: number[]; devices: DeviceLinkInput[] }
   ) => Promise<IpcResult<void>>
+  bridgeSettings: () => Promise<IpcResult<BridgeSettings>>
+  /** On: registers the bridge with the browsers and listens. Off: ends every session and removes it. */
+  setBridgeEnabled: (enabled: boolean) => Promise<IpcResult<BridgeSettings>>
+  /** That browser has to pair again; its open session ends at once. */
+  revokeBrowser: (browserId: number) => Promise<IpcResult<BridgeSettings>>
+  /** The pairing dialog open now, for a window that missed the event. */
+  pendingPairing: () => Promise<IpcResult<PairingPrompt | null>>
+  answerPairing: (id: number, approve: boolean) => Promise<IpcResult<void>>
 }

@@ -1,0 +1,252 @@
+/* VaultKey's own tokens (desktop/src/assets/main.css), light and dark. */
+:root {
+  color-scheme: light dark;
+  --background: #eef0f6;
+  --card: rgb(255 255 255 / 0.72);
+  --foreground: #34374c;
+  --heading: #1b1d2e;
+  --muted-foreground: #696d86;
+  --border: rgb(60 66 110 / 0.11);
+  --primary: #4f5bd5;
+  --primary-foreground: #ffffff;
+  --good: #2e7a57;
+  --warn: #a06a1c;
+  --bad: #c0453f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0e1017;
+    --card: rgb(255 255 255 / 0.035);
+    --foreground: #c8cbdb;
+    --heading: #f0f1f7;
+    --muted-foreground: #8b8fa6;
+    --border: rgb(220 225 255 / 0.1);
+    --primary: #8f98f5;
+    --primary-foreground: #0e1017;
+    --good: #8bcfab;
+    --warn: #e3b469;
+    --bad: #e07a73;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--background);
+  color: var(--foreground);
+  font:
+    14px/1.45 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Inter Variable',
+    system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.badge[data-tone='muted'] {
+  color: var(--muted-foreground);
+}
+.badge[data-tone='good'] {
+  color: var(--good);
+}
+.badge[data-tone='warn'] {
+  color: var(--warn);
+}
+.badge[data-tone='bad'] {
+  color: var(--bad);
+}
+
+.rows {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+}
+
+.rows > div + div {
+  border-top: 1px solid var(--border);
+}
+
+dt {
+  color: var(--muted-foreground);
+}
+
+dd {
+  margin: 0;
+  min-width: 0;
+  text-align: right;
+  color: var(--heading);
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+.button {
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.button.secondary {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--heading);
+}
+
+.pair {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px;
+}
+
+.pair[hidden],
+.code[hidden],
+.button[hidden] {
+  display: none;
+}
+
+.pair-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.code {
+  margin: 2px 0;
+  text-align: center;
+  font: 600 28px/1.2 ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  color: var(--heading);
+}
+
+.logins {
+  display: grid;
+  gap: 8px;
+}
+
+.logins[hidden] {
+  display: none;
+}
+
+.site {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
+.cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.cards:empty {
+  display: none;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+}
+
+.card + .card {
+  border-top: 1px solid var(--border);
+}
+
+.card-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.card-name,
+.card-where {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-name {
+  color: var(--heading);
+}
+
+.card-where {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}

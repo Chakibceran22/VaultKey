@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { AnimatePresence, m } from 'framer-motion'
-import { FileArrowDown, Key, LockKey, MagnifyingGlass } from '@phosphor-icons/react'
+import { FileArrowDown, Key, LockKey, MagnifyingGlass, PuzzlePiece } from '@phosphor-icons/react'
 import { useQuery } from '@tanstack/react-query'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -11,13 +11,16 @@ import { plural } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
 import { IS_MAC, isModKey, isOverlayOpen, MOD } from '@renderer/lib/dom'
 import { useDropTarget } from '@renderer/lib/drop-target'
+import { queryClient } from '@renderer/lib/queryClient'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
 import { cn } from '@renderer/lib/utils'
 import { SearchConsole } from '@renderer/components/search/SearchConsole'
+import { BrowserExtension } from './BrowserExtension'
 import { ChangePassword } from './ChangePassword'
 import { RecoverySetup } from './RecoverySetup'
 import { HistoryGestures } from './HistoryGestures'
+import { PairingDialog } from './PairingDialog'
 import { ThemeToggle } from './ThemeToggle'
 
 const SECTIONS = [
@@ -37,6 +40,7 @@ export function AppFrame() {
   const { logout } = useAuth()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
+  const [extensionOpen, setExtensionOpen] = useState(false)
   const [newCode, setNewCode] = useState(false)
   // How the vault is protected: a vault with its vault key but no recovery code must
   // save one before anything else; an older vault that can't move yet says why.
@@ -115,6 +119,37 @@ export function AppFrame() {
     return () => window.removeEventListener('keydown', onKey)
   }, [lock, navigate])
 
+  // Using the window keeps the vault open; 5 minutes without use, and Rust locks it
+  // (src-tauri/src/idle.rs). Reported at most every 30 s.
+  useEffect(() => {
+    if (!isTauri()) return
+    let last = 0
+    const report = (): void => {
+      const now = Date.now()
+      if (now - last < 30_000) return
+      last = now
+      void api.vaultActivity()
+    }
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const
+    for (const name of events) window.addEventListener(name, report, { passive: true, capture: true })
+    let off: (() => void) | null = null
+    let alive = true
+    listen<string>('vault://locked', () => {
+      queryClient.clear()
+      useAuth.setState({ isAuthenticated: false })
+      navigate('/login')
+      toast.message('VaultKey locked after 5 minutes without use')
+    }).then(
+      (unlisten) => (alive ? (off = unlisten) : unlisten()),
+      () => {}
+    )
+    return () => {
+      alive = false
+      for (const name of events) window.removeEventListener(name, report, { capture: true })
+      off?.()
+    }
+  }, [navigate])
+
   // Files dragged onto the window. Rust keeps the paths; we only hear about it.
   const targetRef = useRef(dropTarget)
   targetRef.current = dropTarget
@@ -188,6 +223,9 @@ export function AppFrame() {
           <Kbd className="ml-auto bg-background/60">{MOD}K</Kbd>
         </button>
         <ThemeToggle />
+        <IconButton label="Browser extension" onClick={() => setExtensionOpen(true)}>
+          <PuzzlePiece size={17} />
+        </IconButton>
         <IconButton label="Change master password" onClick={() => setChangingPassword(true)}>
           <Key size={17} />
         </IconButton>
@@ -218,6 +256,8 @@ export function AppFrame() {
           void security.refetch()
         }}
       />
+      <BrowserExtension open={extensionOpen} onOpenChange={setExtensionOpen} />
+      <PairingDialog />
       <HistoryGestures page={mainRef} />
 
       <AnimatePresence>

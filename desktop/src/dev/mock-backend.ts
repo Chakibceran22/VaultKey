@@ -285,6 +285,23 @@ function domainList() {
   }
 }
 
+/** Settings → Browser extension, in memory: two browsers installed, one paired. */
+const bridge = {
+  enabled: false,
+  listening: false,
+  available: true,
+  dev: true,
+  browsers: [
+    { name: 'Brave', installed: true, registered: false },
+    { name: 'Chrome', installed: true, registered: false },
+    { name: 'Edge', installed: false, registered: false }
+  ],
+  paired: [{ id: 1, name: 'Brave on macOS', createdAt: iso(3), lastSeenAt: iso(0.01) }],
+  recent: [
+    { at: iso(0.002), browser: 'Brave on macOS', account: 'github.com · alice@example.com', site: 'github.com', what: 'login' as const }
+  ]
+}
+
 function handle(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case 'vault_status':
@@ -623,6 +640,22 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       for (const deviceId of args.deviceIds as number[]) deviceLinks.push({ accountId: args.accountId as number, deviceId, note: kept.get(deviceId) ?? '' })
       return null
     }
+    case 'vault_activity':
+      return null
+    case 'bridge_settings':
+      return bridge
+    case 'set_bridge_enabled':
+      bridge.enabled = args.enabled === true
+      bridge.listening = bridge.enabled
+      for (const browser of bridge.browsers) browser.registered = bridge.enabled && browser.installed
+      return bridge
+    case 'revoke_browser':
+      bridge.paired = bridge.paired.filter((browser) => browser.id !== args.browserId)
+      return bridge
+    case 'pending_pairing':
+      return null
+    case 'answer_pairing':
+      return fail('NOT_FOUND', 'That pairing request has already ended.')
     case 'plugin:clipboard-manager|write_text':
     case 'plugin:clipboard-manager|write_secret':
       return null
