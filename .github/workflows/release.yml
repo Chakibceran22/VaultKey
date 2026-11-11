@@ -4,7 +4,7 @@ name: Release
 # attaches the installers to a draft GitHub release for that tag: check it, then publish.
 # No separate build artifacts are uploaded, so nothing piles up in Actions storage.
 #
-#   git tag v2.0.0 && git push origin v2.0.0
+#   git tag v1.0.0 && git push origin v1.0.0
 #
 # It can also be started by hand (Actions → Release → Run workflow), naming the tag.
 
@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: The tag to build and release, e.g. v2.0.0
+        description: The tag to build and release, e.g. v1.0.0
         required: true
 
 permissions:
