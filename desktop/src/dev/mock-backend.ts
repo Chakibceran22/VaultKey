@@ -261,6 +261,9 @@ function previewParseEnv(text: string): { entries: { line: number; name: string;
   return { entries, skipped: skipped.sort((a, b) => a.line - b.line) }
 }
 
+const PREVIEW_WORDS = 'gesture panda orbit velvet sample lunar kidney rescue amateur hockey fabric meadow tunnel boring easily quantum jacket olive rival thunder walnut cabin depart zebra'.split(' ')
+const previewRecovery = { saved: false }
+
 function removeWhere<T>(list: T[], test: (item: T) => boolean): void {
   for (let i = list.length - 1; i >= 0; i--) if (test(list[i])) list.splice(i, 1)
 }
@@ -285,12 +288,31 @@ function domainList() {
 function handle(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case 'vault_status':
-      return { status: 'NEEDS_LOGIN' }
+      return { status: 'NEEDS_LOGIN', recoveryCode: true }
     case 'create_vault':
       return null
     case 'unlock_vault':
       return { valid: args.masterPassword !== 'wrong' }
     case 'lock_vault':
+      return null
+    case 'change_master_password':
+      if (args.currentPassword === 'wrong') fail('AUTH_FAILED', 'The master password is wrong.')
+      return null
+    // The recovery code, for the preview: a fixed list of 24 words, nothing kept.
+    case 'security_status':
+      return { vaultKey: true, recoveryCode: previewRecovery.saved, waitingOn: [] }
+    case 'new_recovery_code':
+      return { words: PREVIEW_WORDS }
+    case 'save_recovery_code': {
+      if (args.masterPassword === 'wrong') fail('AUTH_FAILED', 'The master password is wrong.')
+      for (const { position, word } of args.answers as { position: number; word: string }[]) {
+        if (PREVIEW_WORDS[position - 1] !== word.trim().toLowerCase()) fail('INVALID_INPUT', `Word ${position} doesn’t match. Check what you wrote down.`)
+      }
+      previewRecovery.saved = true
+      return null
+    }
+    case 'recover_vault':
+      if ((args.recoveryCode as string).trim().split(/\s+/).length !== 24) fail('INVALID_INPUT', 'A recovery code has 24 words.')
       return null
     case 'fetch_domains':
       return domainList()

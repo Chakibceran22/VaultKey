@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { m } from 'framer-motion'
-import { LockKey } from '@phosphor-icons/react'
 import { container, item } from '@renderer/components/motion'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -12,7 +11,6 @@ export function LockScreen({
   hero,
   title,
   subtitle,
-  footnote,
   children
 }: {
   hero: ReactNode
@@ -58,12 +56,7 @@ export function LockScreen({
         </m.div>
       </main>
 
-      {footnote && (
-        <p className="relative z-10 flex shrink-0 items-center justify-center gap-1.5 pb-7 text-[12.5px] text-muted-foreground">
-          <LockKey size={13} />
-          {footnote}
-        </p>
-      )}
+      
     </div>
   )
 }

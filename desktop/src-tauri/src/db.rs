@@ -106,6 +106,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "service-logins",
         sql: include_str!("migrations/0006_service_logins.sql"),
     },
+    Migration {
+        version: 7,
+        name: "vault-key-slots",
+        sql: include_str!("migrations/0007_vault_key.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.
@@ -242,6 +247,10 @@ impl VaultDatabase {
             "PRAGMA foreign_keys = ON",
             "PRAGMA journal_mode = WAL",
             "PRAGMA synchronous = FULL",
+            // On macOS a plain fsync() leaves the data in the drive's cache: a power
+            // loss could undo a commit, or tear a checkpoint. F_FULLFSYNC flushes it.
+            "PRAGMA fullfsync = ON",
+            "PRAGMA checkpoint_fullfsync = ON",
             "PRAGMA secure_delete = ON",
             "PRAGMA trusted_schema = OFF",
             "PRAGMA wal_autocheckpoint = 1000",
@@ -274,7 +283,7 @@ impl VaultDatabase {
         if current > 0 && current < target {
             // Never migrate (or back up) a vault that is already damaged.
             self.assert_integrity()?;
-            self.create_verified_backup(backup_directory, current)?;
+            self.create_verified_backup(backup_directory, &format!("vaultkey-v{current}-{}", backup_timestamp()))?;
         }
 
         let mut pending: Vec<&Migration> = migrations
@@ -301,21 +310,55 @@ impl VaultDatabase {
         })
     }
 
-    fn create_verified_backup(&self, directory: &Path, version: i64) -> VaultResult<()> {
+    /// A verified copy of the whole vault as it is now, taken before a change that
+    /// can't be undone otherwise: `vaultkey-before-<label>-<time>.sqlite3` in
+    /// `directory`. Returns where it is.
+    pub(crate) fn backup_before(&self, directory: &Path, label: &str) -> VaultResult<PathBuf> {
+        self.create_verified_backup(directory, &format!("vaultkey-before-{label}-{}", backup_timestamp()))
+    }
+
+    /// Folds the WAL back into the main file and empties it, so pages written before
+    /// (under an old key) don't linger beside it. Best effort.
+    pub(crate) fn checkpoint(&self) {
+        let _ = exec_drain(&self.conn, "PRAGMA wal_checkpoint(TRUNCATE)");
+    }
+
+    /// Written as `<prefix>.partial`, verified and flushed, then renamed: a file under
+    /// the final name is always a complete, verified backup. A failed one is removed.
+    fn create_verified_backup(&self, directory: &Path, prefix: &str) -> VaultResult<PathBuf> {
         fs::create_dir_all(directory)?;
         restrict(directory, 0o700);
-        let prefix = format!("vaultkey-v{version}-{}", backup_timestamp());
+        let partial = directory.join(format!("{prefix}.partial"));
         let backup_path = directory.join(format!("{prefix}.sqlite3"));
-        let target = backup_path
+        let written = self.write_backup(&partial).and_then(|()| {
+            fs::rename(&partial, &backup_path)?;
+            // The rename itself reaches the disk.
+            if let Ok(folder) = fs::File::open(directory) {
+                let _ = folder.sync_all();
+            }
+            Ok(())
+        });
+        if let Err(error) = written {
+            for suffix in ["", "-journal", "-wal", "-shm"] {
+                let _ = fs::remove_file(directory.join(format!("{prefix}.partial{suffix}")));
+            }
+            return Err(error);
+        }
+        restrict(&backup_path, 0o600);
+        Ok(backup_path)
+    }
+
+    fn write_backup(&self, path: &Path) -> VaultResult<()> {
+        let target = path
             .to_str()
             .ok_or_else(|| VaultError::unavailable().with_detail("backup path is not UTF-8"))?;
-
+        // VACUUM INTO refuses an existing file: a leftover from an interrupted run.
+        let _ = fs::remove_file(path);
         // A consistent snapshot of the live database, taken through SQLite itself.
         self.conn.execute("VACUUM INTO ?1", [target])?;
-        restrict(&backup_path, 0o600);
-
+        restrict(path, 0o600);
         {
-            let backup = Connection::open(&backup_path)?;
+            let backup = Connection::open(path)?;
             if !integrity_ok(&backup)? {
                 return Err(VaultError::new(
                     ErrorCode::DatabaseUnavailable,
@@ -325,17 +368,12 @@ impl VaultDatabase {
             exec_drain(&backup, "PRAGMA wal_checkpoint(TRUNCATE)")?;
             exec_drain(&backup, "PRAGMA journal_mode = DELETE")?;
         }
-
-        for entry in fs::read_dir(directory)? {
-            let entry = entry?;
-            if entry.file_name().to_string_lossy().starts_with(&prefix) {
-                restrict(&entry.path(), 0o600);
-            }
-        }
+        // On disk (F_FULLFSYNC on macOS) before it gets its final name.
+        fs::File::open(path)?.sync_all()?;
         Ok(())
     }
 
-    fn assert_integrity(&self) -> VaultResult<()> {
+    pub(crate) fn assert_integrity(&self) -> VaultResult<()> {
         if !integrity_ok(&self.conn)? {
             return Err(VaultError::new(
                 ErrorCode::DatabaseUnavailable,
@@ -465,6 +503,8 @@ mod tests {
         assert_eq!(journal, "wal");
         assert_eq!(pragma("foreign_keys"), 1);
         assert_eq!(pragma("synchronous"), 2); // FULL
+        assert_eq!(pragma("fullfsync"), 1);
+        assert_eq!(pragma("checkpoint_fullfsync"), 1);
         assert_eq!(pragma("secure_delete"), 1);
         assert_eq!(pragma("trusted_schema"), 0);
         assert_eq!(pragma("user_version"), MIGRATIONS.last().unwrap().version);

@@ -7,6 +7,8 @@ mod db;
 mod dotenv;
 mod error;
 mod paths;
+mod recovery;
+mod rekey;
 mod store;
 mod totp;
 mod validation;
@@ -239,6 +241,11 @@ pub fn run() {
             commands::read_staged_env,
             commands::import_env,
             commands::reveal_service_login,
+            commands::change_master_password,
+            commands::new_recovery_code,
+            commands::save_recovery_code,
+            commands::recover_vault,
+            commands::security_status,
             commands::export_secret,
             commands::list_account_links,
             commands::set_sign_in_links,

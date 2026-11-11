@@ -74,8 +74,13 @@ pub fn read_kdf(conn: &Connection) -> VaultResult<Option<KdfParams>> {
     if version != KDF_VERSION {
         return Err(unsupported_kdf());
     }
+    kdf_from_parts(&salt, iterations, memory, parallelism, hash_length).map(Some)
+}
+
+/// Stored Argon2id parameters, checked: the same bounds for every KDF the vault keeps.
+fn kdf_from_parts(salt: &[u8], iterations: i64, memory: i64, parallelism: i64, hash_length: i64) -> VaultResult<KdfParams> {
     let kdf = KdfParams {
-        salt: <[u8; SALT_LEN]>::try_from(salt.as_slice()).map_err(|_| unsupported_kdf())?,
+        salt: <[u8; SALT_LEN]>::try_from(salt).map_err(|_| unsupported_kdf())?,
         iterations: to_u32(iterations)?,
         memory_kib: to_u32(memory)?,
         parallelism: to_u32(parallelism)?,
@@ -90,7 +95,99 @@ pub fn read_kdf(conn: &Connection) -> VaultResult<Option<KdfParams>> {
     if !in_bounds {
         return Err(unsupported_kdf());
     }
-    Ok(Some(kdf))
+    Ok(kdf)
+}
+
+// ── the vault key's slots (schema v7) ────────────────────────────────────────
+
+pub const PASSWORD_SLOT: &str = "password";
+pub const RECOVERY_SLOT: &str = "recovery";
+
+/// The vault key, wrapped by one way of opening the vault. `kdf`: the recovery code's
+/// own Argon2id parameters (the password's are in `vault_metadata`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeySlot {
+    pub kdf: Option<KdfParams>,
+    pub wrapped: Vec<u8>,
+}
+
+pub fn read_slot(conn: &Connection, kind: &str) -> VaultResult<Option<KeySlot>> {
+    let row = conn
+        .query_row(
+            "SELECT kdf_salt, argon2_iterations, argon2_memory_size, argon2_parallelism, argon2_hash_length, wrapped_key
+             FROM key_slots WHERE kind = ?1",
+            [kind],
+            |row| {
+                Ok((
+                    row.get::<_, Option<Vec<u8>>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((salt, iterations, memory, parallelism, hash_length, wrapped)) = row else {
+        return Ok(None);
+    };
+    let kdf = match (salt, iterations, memory, parallelism, hash_length) {
+        (Some(salt), Some(i), Some(m), Some(p), Some(h)) => Some(kdf_from_parts(&salt, i, m, p, h)?),
+        (None, None, None, None, None) => None,
+        _ => return Err(unsupported_kdf()),
+    };
+    Ok(Some(KeySlot { kdf, wrapped }))
+}
+
+/// Inserts or replaces a slot (inside the caller's transaction).
+pub fn write_slot(conn: &Connection, kind: &str, kdf: Option<&KdfParams>, wrapped: &[u8]) -> VaultResult<()> {
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO key_slots (kind, kdf_salt, argon2_iterations, argon2_memory_size, argon2_parallelism,
+           argon2_hash_length, wrapped_key, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+         ON CONFLICT (kind) DO UPDATE SET kdf_salt = excluded.kdf_salt,
+           argon2_iterations = excluded.argon2_iterations, argon2_memory_size = excluded.argon2_memory_size,
+           argon2_parallelism = excluded.argon2_parallelism, argon2_hash_length = excluded.argon2_hash_length,
+           wrapped_key = excluded.wrapped_key, updated_at = excluded.updated_at",
+        params![
+            kind,
+            kdf.map(|k| k.salt.to_vec()),
+            kdf.map(|k| k.iterations),
+            kdf.map(|k| k.memory_kib),
+            kdf.map(|k| k.parallelism),
+            kdf.map(|k| k.hash_length),
+            wrapped,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+/// A new master password's Argon2id parameters and verifier, replacing the current
+/// ones (inside the caller's transaction).
+pub fn write_password(
+    conn: &Connection,
+    kdf: &KdfParams,
+    verifier_salt: &[u8; SALT_LEN],
+    verifier: &[u8; VERIFIER_LEN],
+) -> VaultResult<()> {
+    let now = now_iso();
+    let metadata = conn.execute(
+        "UPDATE vault_metadata SET kdf_version = ?1, kdf_salt = ?2, argon2_iterations = ?3,
+           argon2_memory_size = ?4, argon2_parallelism = ?5, argon2_hash_length = ?6, updated_at = ?7
+         WHERE id = 1",
+        params![KDF_VERSION, &kdf.salt[..], kdf.iterations, kdf.memory_kib, kdf.parallelism, kdf.hash_length, now],
+    )?;
+    let auth = conn.execute(
+        "UPDATE auth_key SET verifier_version = ?1, verifier_salt = ?2, verifier = ?3, updated_at = ?4 WHERE id = 1",
+        params![VERIFIER_VERSION, &verifier_salt[..], &verifier[..], now],
+    )?;
+    if metadata != 1 || auth != 1 {
+        return Err(VaultError::internal("The vault has no master password to change."));
+    }
+    Ok(())
 }
 
 const MAX_ARGON2_ITERATIONS: u32 = 64;
@@ -149,13 +246,17 @@ pub fn read_verifier(conn: &Connection) -> VaultResult<Option<StoredVerifier>> {
         .optional()?)
 }
 
+/// A new vault's master password: its verifier and the new vault key wrapped by it,
+/// together.
 pub fn insert_verifier(
     database: &mut VaultDatabase,
     salt: &[u8; SALT_LEN],
     verifier: &[u8; VERIFIER_LEN],
+    wrapped_vault_key: &[u8],
 ) -> VaultResult<()> {
     let now = now_iso();
     database.transaction(|transaction| {
+        write_slot(transaction, PASSWORD_SLOT, None, wrapped_vault_key)?;
         if has_auth(transaction)? {
             return Err(VaultError::already_exists(
                 "A master password is already configured.",

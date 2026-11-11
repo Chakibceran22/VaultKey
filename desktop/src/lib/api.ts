@@ -24,6 +24,12 @@ async function call<T>(command: string, args?: InvokeArgs): Promise<IpcResult<T>
 
 export const api: VaultApi = {
   getVaultStatus: () => call('vault_status'),
+  changeMasterPassword: (currentPassword, newPassword) =>
+    call('change_master_password', { currentPassword, newPassword }),
+  securityStatus: () => call('security_status'),
+  newRecoveryCode: () => call('new_recovery_code'),
+  saveRecoveryCode: (masterPassword, answers) => call('save_recovery_code', { masterPassword, answers }),
+  recoverVault: (recoveryCode, newPassword) => call('recover_vault', { recoveryCode, newPassword }),
   createVault: (masterPassword) => call('create_vault', { masterPassword }),
   unlockVault: (masterPassword) => call('unlock_vault', { masterPassword }),
   lockVault: () => call('lock_vault'),

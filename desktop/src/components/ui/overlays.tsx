@@ -19,6 +19,7 @@ export function Modal({
   title,
   description,
   size = 'md',
+  closable = true,
   children
 }: {
   open: boolean
@@ -26,6 +27,8 @@ export function Modal({
   title: string
   description?: ReactNode
   size?: keyof typeof widths
+  /** False for a step that must be finished: no close button (and the caller ignores Esc). */
+  closable?: boolean
   /** A <form> made of <ModalBody> and <ModalFooter>. */
   children: ReactNode
 }) {
@@ -50,9 +53,11 @@ export function Modal({
                 </Dialog.Description>
               )}
             </div>
-            <Dialog.Close render={<IconButton label="Close" shortcut="Esc" size="icon-sm" className="-mt-0.5 -mr-2" />}>
-              <X size={15} />
-            </Dialog.Close>
+            {closable && (
+              <Dialog.Close render={<IconButton label="Close" shortcut="Esc" size="icon-sm" className="-mt-0.5 -mr-2" />}>
+                <X size={15} />
+              </Dialog.Close>
+            )}
           </header>
           {children}
         </Dialog.Popup>

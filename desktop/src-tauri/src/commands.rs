@@ -54,6 +54,65 @@ where
     outcome
 }
 
+/// Changes the master password: the vault key is wrapped again by the new one (the
+/// data doesn't change). Other operations using the key wait until it's done.
+#[tauri::command]
+pub async fn change_master_password(
+    app: AppHandle,
+    webview: Webview,
+    current_password: String,
+    new_password: String,
+) -> VaultResult<()> {
+    let current_password = Zeroizing::new(current_password);
+    let new_password = Zeroizing::new(new_password);
+    run("master password change", app, webview, move |vault| {
+        vault.change_master_password(&current_password, &new_password)
+    })
+    .await
+}
+
+/// A new recovery code to show once (kept in Rust until it is saved).
+#[tauri::command]
+pub async fn new_recovery_code(app: AppHandle, webview: Webview) -> VaultResult<crate::vault::RecoveryCode> {
+    run("recovery code creation", app, webview, |vault| vault.new_recovery_code()).await
+}
+
+/// Saves the code just shown, once three of its words and the master password match.
+#[tauri::command]
+pub async fn save_recovery_code(
+    app: AppHandle,
+    webview: Webview,
+    master_password: String,
+    answers: Vec<crate::vault::RecoveryAnswer>,
+) -> VaultResult<()> {
+    let master_password = Zeroizing::new(master_password);
+    run("recovery code save", app, webview, move |vault| {
+        vault.save_recovery_code(&master_password, &answers)
+    })
+    .await
+}
+
+/// A forgotten master password: the recovery code sets a new one and unlocks.
+#[tauri::command]
+pub async fn recover_vault(
+    app: AppHandle,
+    webview: Webview,
+    recovery_code: String,
+    new_password: String,
+) -> VaultResult<()> {
+    let recovery_code = Zeroizing::new(recovery_code);
+    let new_password = Zeroizing::new(new_password);
+    run("vault recovery", app, webview, move |vault| {
+        vault.recover(&recovery_code, &new_password)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn security_status(app: AppHandle, webview: Webview) -> VaultResult<crate::vault::SecurityStatus> {
+    run("security status", app, webview, |vault| vault.security_status()).await
+}
+
 #[tauri::command]
 pub async fn vault_status(app: AppHandle, webview: Webview) -> VaultResult<VaultStatus> {
     run("vault status", app, webview, |vault| vault.status()).await

@@ -7,16 +7,19 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::cell::Cell;
+use std::ops::Deref;
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use zeroize::Zeroizing;
 
 use crate::account_details::{self, AccountDetails, Connections, NewFactor, PayloadChange};
-use crate::crypto::{self, SALT_LEN, SecretKey};
+use crate::crypto::{self, KdfParams, SALT_LEN, SecretKey};
+use crate::{recovery, rekey};
 use crate::db::VaultDatabase;
-use crate::error::{VaultError, VaultResult, log_failure};
+use crate::error::{ErrorCode, VaultError, VaultResult, log_failure};
 use crate::store::{self, CredentialChanges, DomainRecord};
 use crate::totp::{Totp, TotpCode};
 use crate::validation::{
@@ -50,13 +53,21 @@ pub enum AuthStatus {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
     pub status: AuthStatus,
+    /// Whether "Forgot your master password?" can offer the recovery code.
+    pub recovery_code: bool,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UnlockResult {
     pub valid: bool,
+    /// Set when this unlock moved a vault from before v7 to a vault key: the backup of
+    /// the vault as it was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgraded_backup: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,12 +120,20 @@ pub struct Vault {
     /// Serialises Argon2id/scrypt work: each run costs ~96 MiB, so concurrent
     /// unlock storms from a misbehaving webview cannot exhaust memory.
     kdf_gate: Mutex<()>,
+    /// Held shared by every operation while it uses the vault key (see [`KeyGuard`]),
+    /// and exclusively by a master password change: no value can be encrypted with
+    /// the old key and written after the vault moved to the new one.
+    key_gate: RwLock<()>,
     /// Files last dropped onto the window (paths from the OS, never from the page),
     /// waiting to be imported into a project.
     dropped: Mutex<Option<(Instant, Vec<PathBuf>)>>,
     /// Files in the upload dialog, waiting to be added. Paths come from the native
     /// picker or a drop, never from the page: it sees a token, a name and a size.
     staged: Mutex<Staged>,
+    /// This process's hold on the vault (see [`lock_instance`]).
+    instance: Mutex<Option<fs::File>>,
+    /// A recovery code shown and waiting to be confirmed.
+    pending_recovery: Mutex<Option<PendingRecovery>>,
 }
 
 #[derive(Default)]
@@ -198,11 +217,169 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn read_or_recover<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_or_recover<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+thread_local! {
+    /// Whether this thread already holds the key gate (through a live [`KeyGuard`]),
+    /// so a nested use doesn't wait on a password change that waits for it.
+    static HOLDS_KEY_GATE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The vault key, for one operation. While it lives, the master password can't change
+/// under it: a change waits for it, and it waits for a change in progress.
+pub(crate) struct KeyGuard<'a> {
+    key: SecretKey,
+    gate: Option<RwLockReadGuard<'a, ()>>,
+}
+
+impl Deref for KeyGuard<'_> {
+    type Target = SecretKey;
+
+    fn deref(&self) -> &SecretKey {
+        &self.key
+    }
+}
+
+impl Drop for KeyGuard<'_> {
+    fn drop(&mut self) {
+        if self.gate.take().is_some() {
+            HOLDS_KEY_GATE.set(false);
+        }
+    }
+}
+
+/// What seals the vault key in each slot (AES-256-GCM additional data): a wrapped key
+/// can't be moved from one slot to the other.
+pub(crate) const PASSWORD_LABEL: &[u8] = b"vaultkey/vault-key/password";
+pub(crate) const RECOVERY_LABEL: &[u8] = b"vaultkey/vault-key/recovery";
+
+/// How long a shown recovery code waits to be confirmed and saved.
+const RECOVERY_CODE_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// A recovery code shown and not saved yet. Zeroised when dropped.
+struct PendingRecovery {
+    created: Instant,
+    words: Zeroizing<Vec<String>>,
+    entropy: recovery::Entropy,
+}
+
+/// A new recovery code, for the page to show once.
+#[derive(Serialize)]
+pub struct RecoveryCode {
+    pub words: Vec<String>,
+}
+
+/// A word of the recovery code typed back: `position` from 1.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryAnswer {
+    pub position: usize,
+    pub word: String,
+}
+
+impl Drop for RecoveryAnswer {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.word);
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityStatus {
+    /// The data is under a random vault key (schema v7), not the password's key.
+    pub vault_key: bool,
+    pub recovery_code: bool,
+    /// What keeps a vault from before v7 on its password's key: values that can't be
+    /// read, named. Empty once it has moved.
+    pub waiting_on: Vec<String>,
+}
+
+fn slot_mismatch() -> VaultError {
+    VaultError::internal("The vault key didn't store correctly, so nothing was changed.")
+}
+
+/// A new master password's Argon2id parameters (a new salt, never weaker than
+/// `current`'s or the defaults), key, verifier salt and verifier.
+#[allow(clippy::type_complexity)]
+fn new_password_material(
+    password: &str,
+    current: &KdfParams,
+) -> VaultResult<(KdfParams, SecretKey, [u8; SALT_LEN], Zeroizing<[u8; crypto::VERIFIER_LEN]>)> {
+    let defaults = KdfParams::generate();
+    let kdf = KdfParams {
+        salt: defaults.salt,
+        iterations: current.iterations.max(defaults.iterations),
+        memory_kib: current.memory_kib.max(defaults.memory_kib),
+        parallelism: current.parallelism.max(defaults.parallelism),
+        hash_length: defaults.hash_length,
+    };
+    let keys = crypto::derive_keys(password, &kdf)?;
+    let verifier_salt: [u8; SALT_LEN] = crypto::random_bytes();
+    let verifier = crypto::derive_verifier(keys.auth_key.as_ref(), &verifier_salt)?;
+    Ok((kdf, keys.encryption_key, verifier_salt, verifier))
+}
+
+/// Reads back, inside the transaction, what the next unlock will read, and checks it
+/// opens to the vault key with the new password.
+fn check_stored_password(
+    tx: &rusqlite::Connection,
+    kdf: &KdfParams,
+    verifier_salt: &[u8; SALT_LEN],
+    verifier: &[u8; crypto::VERIFIER_LEN],
+    password_key: &SecretKey,
+    vault_key: &SecretKey,
+) -> VaultResult<()> {
+    let stored_verifier = store::read_verifier(tx)?;
+    let slot = store::read_slot(tx, store::PASSWORD_SLOT)?.ok_or_else(slot_mismatch)?;
+    let ok = store::read_kdf(tx)?.as_ref() == Some(kdf)
+        && stored_verifier.is_some_and(|v| v.salt == verifier_salt[..] && v.verifier == verifier[..])
+        && crypto::same_key(&crypto::unwrap_key(&slot.wrapped, password_key, PASSWORD_LABEL)?, vault_key);
+    if !ok {
+        return Err(slot_mismatch());
+    }
+    Ok(())
+}
+
+/// Only one app at a time may open a vault: another one, unlocked on the same file,
+/// could write with a key this one has replaced. The lock (`<vault>.lock`) is held for
+/// the life of the process; the OS releases it when the process ends, however it ends.
+fn lock_instance(path: &Path, held: &Mutex<Option<fs::File>>) -> VaultResult<()> {
+    let mut held = lock_or_recover(held);
+    if held.is_some() {
+        return Ok(());
+    }
+    if let Some(directory) = path.parent() {
+        fs::create_dir_all(directory)?;
+    }
+    let mut name = path.as_os_str().to_owned();
+    name.push(".lock");
+    let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(PathBuf::from(name))?;
+    match file.try_lock() {
+        Ok(()) => {
+            *held = Some(file);
+            Ok(())
+        }
+        Err(fs::TryLockError::WouldBlock) => Err(VaultError::new(
+            ErrorCode::DatabaseUnavailable,
+            "VaultKey is already open in another window. Close it, then try again.",
+        )),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
+
+
 impl Vault {
     /// Opens the database at `path`. A failure is logged and remembered rather than
     /// fatal: the UI shows its "Local Vault Error" screen, and Retry reopens.
     pub fn open(path: PathBuf) -> Self {
-        let database = match VaultDatabase::open(&path) {
+        let instance = Mutex::new(None);
+        let database = match lock_instance(&path, &instance).and_then(|()| VaultDatabase::open(&path)) {
             Ok(database) => Some(database),
             Err(error) => {
                 log_failure("database initialization", &error);
@@ -214,8 +391,11 @@ impl Vault {
             database: Mutex::new(database),
             session: Mutex::new(Session::default()),
             kdf_gate: Mutex::new(()),
+            key_gate: RwLock::new(()),
             dropped: Mutex::new(None),
             staged: Mutex::new(Staged::default()),
+            instance,
+            pending_recovery: Mutex::new(None),
         }
     }
 
@@ -228,12 +408,19 @@ impl Vault {
         body(database)
     }
 
-    fn session_key(&self) -> VaultResult<SecretKey> {
-        lock_or_recover(&self.session)
+    /// The vault key, held for the caller's operation (see [`KeyGuard`]).
+    fn session_key(&self) -> VaultResult<KeyGuard<'_>> {
+        // A thread already holding the gate takes the key without waiting again.
+        let gate = (!HOLDS_KEY_GATE.get()).then(|| read_or_recover(&self.key_gate));
+        let key = lock_or_recover(&self.session)
             .key
             .as_ref()
             .map(|key| Zeroizing::new(**key))
-            .ok_or_else(|| VaultError::locked("Unlock the vault first."))
+            .ok_or_else(|| VaultError::locked("Unlock the vault first."))?;
+        if gate.is_some() {
+            HOLDS_KEY_GATE.set(true);
+        }
+        Ok(KeyGuard { key, gate })
     }
 
     pub(crate) fn require_unlocked(&self) -> VaultResult<()> {
@@ -250,7 +437,9 @@ impl Vault {
     pub fn status(&self) -> VaultResult<VaultStatus> {
         let mut guard = lock_or_recover(&self.database);
         if guard.is_none() {
-            // Retry after a failed start-up (e.g. the disk was unavailable).
+            // Retry after a failed start-up (e.g. the disk was unavailable, or another
+            // copy of the app had the vault open).
+            lock_instance(&self.path, &self.instance)?;
             *guard = Some(VaultDatabase::open(&self.path)?);
         }
         let database = guard.as_mut().ok_or_else(VaultError::unavailable)?;
@@ -260,11 +449,13 @@ impl Vault {
         } else {
             AuthStatus::NeedsSignup
         };
-        Ok(VaultStatus { status })
+        let recovery_code = store::read_slot(database.connection(), store::RECOVERY_SLOT)?.is_some();
+        Ok(VaultStatus { status, recovery_code })
     }
 
-    /// First-run signup: stores only a verifier of the derived auth key.
-    /// Like the Electron app, this does not unlock; the user logs in afterwards.
+    /// First-run signup: stores a verifier of the derived auth key, and a new random
+    /// vault key wrapped by the password's key. Like the Electron app, this does not
+    /// unlock; the user logs in afterwards.
     pub fn create_vault(&self, master_password: &str) -> VaultResult<()> {
         validation::validate_new_master_password(master_password)?;
         let kdf = self.with_database(|database| {
@@ -277,24 +468,33 @@ impl Vault {
             Ok(kdf)
         })?;
         let salt: [u8; SALT_LEN] = crypto::random_bytes();
-        let verifier = {
+        let vault_key = crypto::new_vault_key();
+        let (verifier, wrapped) = {
             let _gate = lock_or_recover(&self.kdf_gate);
             let keys = crypto::derive_keys(master_password, &kdf)?;
-            crypto::derive_verifier(keys.auth_key.as_ref(), &salt)?
+            (
+                crypto::derive_verifier(keys.auth_key.as_ref(), &salt)?,
+                crypto::wrap_key(&vault_key, &keys.encryption_key, PASSWORD_LABEL)?,
+            )
         };
-        self.with_database(|database| store::insert_verifier(database, &salt, &verifier))
+        self.with_database(|database| store::insert_verifier(database, &salt, &verifier, &wrapped))
+    }
+
+    /// Reads, in one go, what opening the vault with its master password needs.
+    fn password_material(&self) -> VaultResult<(KdfParams, store::StoredVerifier, Option<store::KeySlot>)> {
+        self.with_database(|database| {
+            let conn = database.connection();
+            let missing = || VaultError::not_found("The vault has not been initialized.");
+            let kdf = store::read_kdf(conn)?.ok_or_else(missing)?;
+            let stored = store::read_verifier(conn)?.ok_or_else(missing)?;
+            Ok((kdf, stored, store::read_slot(conn, store::PASSWORD_SLOT)?))
+        })
     }
 
     pub fn unlock(&self, master_password: &str) -> VaultResult<UnlockResult> {
         validation::validate_master_password(master_password)?;
         let epoch = lock_or_recover(&self.session).epoch;
-        let (kdf, stored) = self.with_database(|database| {
-            let not_initialized = || VaultError::not_found("The vault has not been initialized.");
-            let kdf = store::read_kdf(database.connection())?.ok_or_else(not_initialized)?;
-            let stored =
-                store::read_verifier(database.connection())?.ok_or_else(not_initialized)?;
-            Ok((kdf, stored))
-        })?;
+        let (kdf, stored, slot) = self.password_material()?;
         let (keys, valid) = {
             let _gate = lock_or_recover(&self.kdf_gate);
             let keys = crypto::derive_keys(master_password, &kdf)?;
@@ -303,16 +503,309 @@ impl Vault {
             (keys, valid)
         };
         if !valid {
-            return Ok(UnlockResult { valid: false });
+            return Ok(UnlockResult { valid: false, upgraded_backup: None });
         }
+        let (key, upgraded_backup) = match slot {
+            Some(slot) => (crypto::unwrap_key(&slot.wrapped, &keys.encryption_key, PASSWORD_LABEL)?, None),
+            // A vault from before v7: its data is still under the password's key.
+            None => self.upgrade_to_vault_key(&keys.encryption_key)?,
+        };
         let mut session = lock_or_recover(&self.session);
         if session.epoch != epoch {
             // The vault was locked while we were deriving keys (e.g. the page
             // reloaded). Honour the lock; the UI will ask for the password again.
             return Err(VaultError::locked("The vault was locked during unlock."));
         }
-        session.key = Some(keys.encryption_key);
-        Ok(UnlockResult { valid: true })
+        session.key = Some(key);
+        Ok(UnlockResult { valid: true, upgraded_backup })
+    }
+
+    fn backups_directory(&self) -> VaultResult<PathBuf> {
+        self.path
+            .parent()
+            .map(|directory| directory.join("backups"))
+            .ok_or_else(|| VaultError::unavailable().with_detail("the vault has no folder"))
+    }
+
+    /// The first unlock of a vault from before v7 moves its data from the password's
+    /// key to a new random vault key, wrapped by the password's key: after a verified
+    /// backup of the vault as it was, in one transaction (`rekey.rs`). The password
+    /// stays the same. Returns the key to unlock with, and the backup's path if it moved.
+    ///
+    /// If a value can't be read with the password's key, or the file has a column this
+    /// app doesn't know, nothing moves: the vault unlocks under the password's key as
+    /// before, and [`Vault::security_status`] says what holds the move back. It tries
+    /// again at the next unlock.
+    fn upgrade_to_vault_key(&self, password_key: &SecretKey) -> VaultResult<(SecretKey, Option<String>)> {
+        let _exclusive = write_or_recover(&self.key_gate);
+        let backups = self.backups_directory()?;
+        self.with_database(|database| {
+            // Another unlock may have just done it.
+            if let Some(slot) = store::read_slot(database.connection(), store::PASSWORD_SLOT)? {
+                return Ok((crypto::unwrap_key(&slot.wrapped, password_key, PASSWORD_LABEL)?, None));
+            }
+            let blocked = rekey::check_schema(database.connection()).is_err()
+                || !rekey::unreadable(database.connection(), password_key)?.is_empty();
+            if blocked {
+                return Ok((Zeroizing::new(**password_key), None));
+            }
+            database.assert_integrity()?;
+            let backup = database.backup_before(&backups, "vault-key")?;
+            let vault_key = crypto::new_vault_key();
+            let moved = database.transaction(|tx| {
+                rekey::rekey(tx, password_key, &vault_key)?;
+                store::write_slot(tx, store::PASSWORD_SLOT, None, &crypto::wrap_key(&vault_key, password_key, PASSWORD_LABEL)?)?;
+                // What the next unlock reads opens to this key.
+                let stored = store::read_slot(tx, store::PASSWORD_SLOT)?.ok_or_else(slot_mismatch)?;
+                if !crypto::same_key(&crypto::unwrap_key(&stored.wrapped, password_key, PASSWORD_LABEL)?, &vault_key) {
+                    return Err(slot_mismatch());
+                }
+                Ok(())
+            });
+            if let Err(error) = moved {
+                // Nothing changed: no copy left behind.
+                let _ = fs::remove_file(&backup);
+                return Err(VaultError::internal(format!(
+                    "The vault couldn't move to its new encryption, so nothing was changed and your password still works. Unlock again to retry. ({})",
+                    error.message
+                )));
+            }
+            database.checkpoint();
+            Ok((vault_key, Some(backup.display().to_string())))
+        })
+    }
+
+    /// Changes the master password. The data doesn't change: its vault key is wrapped
+    /// again by the new password's key, in one transaction with the new password's
+    /// salt and verifier, then read back as the next unlock will read it. The recovery
+    /// code keeps working.
+    pub fn change_master_password(&self, current: &str, new: &str) -> VaultResult<()> {
+        validation::validate_master_password(current)?;
+        validation::validate_new_master_password(new)?;
+        if current == new {
+            return Err(VaultError::invalid_input("The new password is the same as the current one."));
+        }
+        if HOLDS_KEY_GATE.get() {
+            return Err(VaultError::internal("A master password change can't start inside another operation."));
+        }
+        let _exclusive = write_or_recover(&self.key_gate);
+        let vault_key = self.current_key()?;
+        let (kdf, stored, slot) = self.password_material()?;
+        let slot = slot.ok_or_else(|| {
+            VaultError::invalid_input(
+                "Your vault hasn’t moved to its new encryption yet, so its password can’t be changed. Fix what it lists, then unlock again.",
+            )
+        })?;
+        let (new_kdf, new_key, verifier_salt, verifier) = {
+            let _gate = lock_or_recover(&self.kdf_gate);
+            self.check_password(current, &kdf, &stored, &slot, &vault_key)?;
+            new_password_material(new, &kdf)?
+        };
+        let wrapped = crypto::wrap_key(&vault_key, &new_key, PASSWORD_LABEL)?;
+        let saved = self.with_database(|database| {
+            database.transaction(|tx| {
+                // Still the password just checked.
+                let unchanged = store::read_kdf(tx)?.as_ref() == Some(&kdf)
+                    && store::read_verifier(tx)?.is_some_and(|now| now.salt == stored.salt && now.verifier == stored.verifier)
+                    && store::read_slot(tx, store::PASSWORD_SLOT)?.as_ref() == Some(&slot);
+                if !unchanged {
+                    return Err(VaultError::internal("The master password changed meanwhile, so nothing was changed."));
+                }
+                store::write_password(tx, &new_kdf, &verifier_salt, &verifier)?;
+                store::write_slot(tx, store::PASSWORD_SLOT, None, &wrapped)?;
+                check_stored_password(tx, &new_kdf, &verifier_salt, &verifier, &new_key, &vault_key)
+            })
+        });
+        if saved.is_err() {
+            // Whatever happened, the next unlock reads what is on disk.
+            self.lock();
+        }
+        saved
+    }
+
+    /// The session's key, read under the exclusive gate held by the caller.
+    fn current_key(&self) -> VaultResult<SecretKey> {
+        lock_or_recover(&self.session)
+            .key
+            .as_ref()
+            .map(|key| Zeroizing::new(**key))
+            .ok_or_else(|| VaultError::locked("Unlock the vault first."))
+    }
+
+    /// The master password, checked like an unlock, and its slot opening to the
+    /// session's vault key. Call under the KDF gate.
+    fn check_password(
+        &self,
+        password: &str,
+        kdf: &KdfParams,
+        stored: &store::StoredVerifier,
+        slot: &store::KeySlot,
+        vault_key: &SecretKey,
+    ) -> VaultResult<()> {
+        let keys = crypto::derive_keys(password, kdf)?;
+        let derived = crypto::derive_verifier(keys.auth_key.as_ref(), &stored.salt)?;
+        if !crypto::verifier_matches(&stored.verifier, derived.as_ref()) {
+            return Err(VaultError::new(ErrorCode::AuthFailed, "The master password is wrong."));
+        }
+        let opened = crypto::unwrap_key(&slot.wrapped, &keys.encryption_key, PASSWORD_LABEL)?;
+        if !crypto::same_key(&opened, vault_key) {
+            return Err(VaultError::internal(
+                "This session's key doesn't match the vault. Lock the vault, unlock it, and try again.",
+            ));
+        }
+        Ok(())
+    }
+
+    // ── recovery code ───────────────────────────────────────────────────────
+
+    /// A new recovery code, shown once. It is kept in memory only, until the user proves
+    /// they wrote it down ([`Vault::save_recovery_code`]), for at most 30 minutes.
+    pub fn new_recovery_code(&self) -> VaultResult<RecoveryCode> {
+        self.require_unlocked()?;
+        if self.with_database(|db| store::read_slot(db.connection(), store::PASSWORD_SLOT))?.is_none() {
+            return Err(VaultError::invalid_input(
+                "Your vault hasn’t moved to its new encryption yet. Fix what it lists, then unlock again.",
+            ));
+        }
+        let (words, entropy) = recovery::generate();
+        let shown = words.to_vec();
+        *lock_or_recover(&self.pending_recovery) = Some(PendingRecovery { created: Instant::now(), words, entropy });
+        Ok(RecoveryCode { words: shown })
+    }
+
+    /// Saves the code from [`Vault::new_recovery_code`] once the words asked for match
+    /// and the master password is right (so nobody passing by an unlocked vault can
+    /// give themselves a way in). It replaces any previous code.
+    pub fn save_recovery_code(&self, master_password: &str, answers: &[RecoveryAnswer]) -> VaultResult<()> {
+        validation::validate_master_password(master_password)?;
+        if HOLDS_KEY_GATE.get() {
+            return Err(VaultError::internal("A recovery code can't be saved inside another operation."));
+        }
+        let _exclusive = write_or_recover(&self.key_gate);
+        let entropy = {
+            let pending = lock_or_recover(&self.pending_recovery);
+            let pending = pending
+                .as_ref()
+                .filter(|p| p.created.elapsed() < RECOVERY_CODE_TTL)
+                .ok_or_else(|| VaultError::invalid_input("This recovery code expired. Create a new one."))?;
+            let mut asked: Vec<usize> = answers.iter().map(|a| a.position).collect();
+            asked.sort_unstable();
+            asked.dedup();
+            if asked.len() < 3 || asked.len() != answers.len() || asked.iter().any(|&p| p == 0 || p > recovery::WORDS) {
+                return Err(VaultError::invalid_input("Type back three different words of the code."));
+            }
+            for answer in answers {
+                if !recovery::word_matches(&pending.words[answer.position - 1], &answer.word) {
+                    return Err(VaultError::invalid_input(format!(
+                        "Word {} doesn’t match. Check what you wrote down.",
+                        answer.position
+                    )));
+                }
+            }
+            Zeroizing::new(*pending.entropy)
+        };
+        let vault_key = self.current_key()?;
+        let (kdf, stored, slot) = self.password_material()?;
+        let slot = slot.ok_or_else(|| VaultError::invalid_input("Your vault hasn’t moved to its new encryption yet."))?;
+        let (code_kdf, code_key) = {
+            let _gate = lock_or_recover(&self.kdf_gate);
+            self.check_password(master_password, &kdf, &stored, &slot, &vault_key)?;
+            let code_kdf = KdfParams::generate();
+            let code_key = crypto::derive_keys_from_bytes(entropy.as_ref(), &code_kdf)?.encryption_key;
+            (code_kdf, code_key)
+        };
+        let wrapped = crypto::wrap_key(&vault_key, &code_key, RECOVERY_LABEL)?;
+        self.with_database(|database| {
+            database.transaction(|tx| {
+                store::write_slot(tx, store::RECOVERY_SLOT, Some(&code_kdf), &wrapped)?;
+                let stored = store::read_slot(tx, store::RECOVERY_SLOT)?.ok_or_else(slot_mismatch)?;
+                let opens = stored.kdf.as_ref() == Some(&code_kdf)
+                    && crypto::same_key(&crypto::unwrap_key(&stored.wrapped, &code_key, RECOVERY_LABEL)?, &vault_key);
+                if !opens {
+                    return Err(slot_mismatch());
+                }
+                Ok(())
+            })
+        })?;
+        *lock_or_recover(&self.pending_recovery) = None;
+        Ok(())
+    }
+
+    /// A forgotten master password: the recovery code opens the vault key, a new
+    /// master password replaces the old one, and the vault unlocks. The code stays
+    /// valid until a new one replaces it (the app asks for one right away).
+    pub fn recover(&self, code: &str, new_password: &str) -> VaultResult<()> {
+        validation::validate_new_master_password(new_password)?;
+        let entropy = recovery::parse(code)?;
+        if HOLDS_KEY_GATE.get() {
+            return Err(VaultError::internal("Recovery can't start inside another operation."));
+        }
+        let _exclusive = write_or_recover(&self.key_gate);
+        let (kdf, stored, slot) = self.password_material()?;
+        let code_slot = self
+            .with_database(|db| store::read_slot(db.connection(), store::RECOVERY_SLOT))?
+            .ok_or_else(|| VaultError::not_found("This vault has no recovery code."))?;
+        let code_kdf = code_slot.kdf.clone().ok_or_else(slot_mismatch)?;
+        let (vault_key, new_kdf, new_key, verifier_salt, verifier) = {
+            let _gate = lock_or_recover(&self.kdf_gate);
+            let code_key = crypto::derive_keys_from_bytes(entropy.as_ref(), &code_kdf)?.encryption_key;
+            let vault_key = crypto::unwrap_key(&code_slot.wrapped, &code_key, RECOVERY_LABEL)
+                .map_err(|_| VaultError::new(ErrorCode::AuthFailed, "That recovery code doesn’t open this vault."))?;
+            let (new_kdf, new_key, verifier_salt, verifier) = new_password_material(new_password, &kdf)?;
+            (vault_key, new_kdf, new_key, verifier_salt, verifier)
+        };
+        let wrapped = crypto::wrap_key(&vault_key, &new_key, PASSWORD_LABEL)?;
+        let saved = self.with_database(|database| {
+            database.transaction(|tx| {
+                let unchanged = store::read_kdf(tx)?.as_ref() == Some(&kdf)
+                    && store::read_verifier(tx)?.is_some_and(|now| now.salt == stored.salt && now.verifier == stored.verifier)
+                    && store::read_slot(tx, store::PASSWORD_SLOT)? == slot
+                    && store::read_slot(tx, store::RECOVERY_SLOT)?.as_ref() == Some(&code_slot);
+                if !unchanged {
+                    return Err(VaultError::internal("The vault changed meanwhile, so nothing was changed."));
+                }
+                store::write_password(tx, &new_kdf, &verifier_salt, &verifier)?;
+                store::write_slot(tx, store::PASSWORD_SLOT, None, &wrapped)?;
+                check_stored_password(tx, &new_kdf, &verifier_salt, &verifier, &new_key, &vault_key)
+            })
+        });
+        let mut session = lock_or_recover(&self.session);
+        session.epoch = session.epoch.wrapping_add(1);
+        session.key = None;
+        saved?;
+        session.key = Some(vault_key);
+        drop(session);
+        *lock_or_recover(&self.pending_recovery) = None;
+        Ok(())
+    }
+
+    /// How the vault is protected: whether it has moved to a vault key (and if not,
+    /// what holds the move back), and whether it has a recovery code.
+    pub fn security_status(&self) -> VaultResult<SecurityStatus> {
+        let key = self.session_key()?;
+        self.with_database(|database| {
+            let conn = database.connection();
+            let vault_key = store::read_slot(conn, store::PASSWORD_SLOT)?.is_some();
+            let recovery_code = store::read_slot(conn, store::RECOVERY_SLOT)?.is_some();
+            let mut waiting_on = Vec::new();
+            if !vault_key {
+                if let Err(error) = rekey::check_schema(conn) {
+                    waiting_on.push(error.message);
+                }
+                waiting_on.extend(rekey::unreadable(conn, &key)?);
+            }
+            Ok(SecurityStatus { vault_key, recovery_code, waiting_on })
+        })
+    }
+
+    /// A vault as before v7, for tests: no vault key, so what is written next goes
+    /// under the password's key. Call on a new, empty, unlocked vault.
+    #[cfg(test)]
+    pub(crate) fn make_legacy(&self, password: &str) {
+        let kdf = self.with_database(|db| Ok(store::read_kdf(db.connection())?.unwrap())).unwrap();
+        let keys = crypto::derive_keys(password, &kdf).unwrap();
+        self.with_database(|db| Ok(db.connection().execute("DELETE FROM key_slots", [])?)).unwrap();
+        lock_or_recover(&self.session).key = Some(keys.encryption_key);
     }
 
     pub fn lock(&self) {
@@ -1787,17 +2280,8 @@ mod tests {
 
         let vault = Vault::open(path);
         assert_eq!(vault.status().unwrap().status, AuthStatus::NeedsLogin);
-        assert!(!vault.unlock("not the password").unwrap().valid);
-        assert!(vault.unlock(ASCII_PASSWORD).unwrap().valid);
-        let domains = vault.list_domains().unwrap().domains;
-        assert_eq!(
-            (domains[0].name.as_str(), domains[0].count.credentials),
-            ("github.com", 1)
-        );
-        let credentials = vault.list_credentials(domains[0].id).unwrap().credentials;
-        assert_eq!(credentials[0].password, "secret-password");
-        assert_eq!(credentials[0].username, None);
 
+        // Opening ran every schema migration, and they kept every original row.
         let latest = crate::db::MIGRATIONS.last().unwrap().version;
         assert_eq!(
             vault.with_database(|db| db.schema_version()).unwrap(),
@@ -1811,6 +2295,22 @@ mod tests {
             "a migration loses Electron-era data: {problems:?}"
         );
         assert_eq!(checked, 4, "metadata, verifier, one domain, one credential");
+
+        // The first unlock, with the same password, moves its data to a vault key.
+        assert!(!vault.unlock("not the password").unwrap().valid);
+        let unlocked = vault.unlock(ASCII_PASSWORD).unwrap();
+        assert!(unlocked.valid && unlocked.upgraded_backup.is_some());
+        assert!(vault.security_status().unwrap().vault_key);
+        let domains = vault.list_domains().unwrap().domains;
+        assert_eq!(
+            (domains[0].name.as_str(), domains[0].count.credentials),
+            ("github.com", 1)
+        );
+        let credentials = vault.list_credentials(domains[0].id).unwrap().credentials;
+        assert_eq!(credentials[0].password, "secret-password");
+        assert_eq!(credentials[0].username, None);
+        vault.lock();
+        assert!(vault.unlock(ASCII_PASSWORD).unwrap().upgraded_backup.is_none());
         if latest > 1 {
             let backed_up = std::fs::read_dir(directory.path().join("backups"))
                 .unwrap()
@@ -1837,20 +2337,18 @@ mod tests {
     }
 
     /// v1 as it shipped, plus a hypothetical v2 (what a real future migration looks like).
-    fn with_v2(v2_sql: &'static str) -> [crate::db::Migration; 2] {
-        let v1 = &crate::db::MIGRATIONS[0];
-        [
-            crate::db::Migration {
-                version: 1,
-                name: v1.name,
-                sql: v1.sql,
-            },
-            crate::db::Migration {
-                version: 2,
-                name: "future",
-                sql: v2_sql,
-            },
-        ]
+    /// Every real migration, then a future one.
+    fn with_future(sql: &'static str) -> Vec<crate::db::Migration> {
+        let mut migrations: Vec<crate::db::Migration> = crate::db::MIGRATIONS
+            .iter()
+            .map(|m| crate::db::Migration { version: m.version, name: m.name, sql: m.sql })
+            .collect();
+        migrations.push(crate::db::Migration { version: future_version(), name: "future", sql });
+        migrations
+    }
+
+    fn future_version() -> i64 {
+        crate::db::MIGRATIONS.last().unwrap().version + 1
     }
 
     #[test]
@@ -1863,12 +2361,12 @@ mod tests {
         let before = directory.path().join("before.sqlite3");
         std::fs::copy(&path, &before).unwrap();
 
-        let migrations = with_v2(
+        let migrations = with_future(
             "ALTER TABLE credentials ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0;
              CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL) STRICT;",
         );
         let database = VaultDatabase::open_with(&path, &migrations, None).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 2);
+        assert_eq!(database.schema_version().unwrap(), future_version());
         let (checked, problems) =
             crate::db::rows_missing_after_migration(&before, database.connection()).unwrap();
         assert!(problems.is_empty(), "{problems:?}");
@@ -1901,8 +2399,11 @@ mod tests {
             )),
             session: Mutex::new(Session::default()),
             kdf_gate: Mutex::new(()),
+            key_gate: RwLock::new(()),
             dropped: Mutex::new(None),
             staged: Mutex::new(Staged::default()),
+            instance: Mutex::new(None),
+            pending_recovery: Mutex::new(None),
         };
         assert!(vault.unlock(ASCII_PASSWORD).unwrap().valid);
         let domain = vault.list_domains().unwrap().domains[0].id;
@@ -1920,7 +2421,7 @@ mod tests {
         let before = directory.path().join("before.sqlite3");
         std::fs::copy(&path, &before).unwrap();
 
-        let migrations = with_v2("UPDATE credentials SET password = 'oops'");
+        let migrations = with_future("UPDATE credentials SET password = 'oops'");
         let database = VaultDatabase::open_with(&path, &migrations, None).unwrap();
         let (_, problems) =
             crate::db::rows_missing_after_migration(&before, database.connection()).unwrap();
@@ -1956,6 +2457,69 @@ mod tests {
         vault
             .create_credential(credential(domain, email, "pw"))
             .unwrap()
+    }
+
+    #[test]
+    fn a_second_app_cant_open_the_same_vault() {
+        let (directory, vault) = unlocked_vault();
+        let second = Vault::open(directory.path().join("vaultkey.sqlite3"));
+        assert!(second.status().unwrap_err().message.contains("already open"));
+        assert!(second.unlock(MASTER).is_err());
+        // Once the first one is gone, it opens.
+        drop(vault);
+        assert_eq!(second.status().unwrap().status, AuthStatus::NeedsLogin);
+        assert!(second.unlock(MASTER).unwrap().valid);
+    }
+
+    #[test]
+    fn a_password_change_waits_for_operations_using_the_key() {
+        let (_directory, vault) = unlocked_vault();
+        let shop = project(&vault, "Shaba");
+        let secret = |value: &str| SecretInput {
+            name: value.into(),
+            value: value.into(),
+            service_id: None,
+            description: String::new(),
+        };
+        const NEW: &str = "a brand new passphrase";
+        std::thread::scope(|scope| {
+            // An operation in flight, holding the current key.
+            let held = vault.session_key().unwrap();
+            let change = scope.spawn(|| vault.change_master_password(MASTER, NEW));
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(!change.is_finished(), "the change waits for the operation");
+            // The operation finishes with the key it holds (no deadlock on this thread).
+            let written = vault.create_text_secret(shop, secret("written meanwhile")).unwrap();
+            drop(held);
+            change.join().unwrap().unwrap();
+            assert_eq!(vault.reveal_secret(written).unwrap().value, "written meanwhile");
+        });
+
+        // Writers racing a change: whichever side of it they land on, every value they
+        // wrote opens with the new password.
+        const NEWER: &str = "and another one after that";
+        let ids = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for writer in 0..6 {
+                let (vault, ids) = (&vault, &ids);
+                scope.spawn(move || {
+                    for n in 0..15 {
+                        let value = format!("w{writer}-{n}");
+                        let id = vault.create_text_secret(shop, secret(&value)).unwrap();
+                        ids.lock().unwrap().push((id, value));
+                    }
+                });
+            }
+            scope.spawn(|| vault.change_master_password(NEW, NEWER).unwrap());
+        });
+        vault.lock();
+        assert!(!vault.unlock(NEW).unwrap().valid);
+        assert!(vault.unlock(NEWER).unwrap().valid);
+        let ids = ids.into_inner().unwrap();
+        assert_eq!(ids.len(), 90);
+        for (id, value) in ids {
+            assert_eq!(vault.reveal_secret(id).unwrap().value, value);
+        }
     }
 
     #[test]

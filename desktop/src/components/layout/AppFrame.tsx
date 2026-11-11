@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { AnimatePresence, m } from 'framer-motion'
-import { FileArrowDown, LockKey, MagnifyingGlass } from '@phosphor-icons/react'
+import { FileArrowDown, Key, LockKey, MagnifyingGlass } from '@phosphor-icons/react'
+import { useQuery } from '@tanstack/react-query'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useAuth } from '@renderer/store/auth'
@@ -14,6 +15,8 @@ import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
 import { cn } from '@renderer/lib/utils'
 import { SearchConsole } from '@renderer/components/search/SearchConsole'
+import { ChangePassword } from './ChangePassword'
+import { RecoverySetup } from './RecoverySetup'
 import { HistoryGestures } from './HistoryGestures'
 import { ThemeToggle } from './ThemeToggle'
 
@@ -33,6 +36,20 @@ export function AppFrame() {
   const navigationType = useNavigationType()
   const { logout } = useAuth()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [newCode, setNewCode] = useState(false)
+  // How the vault is protected: a vault with its vault key but no recovery code must
+  // save one before anything else; an older vault that can't move yet says why.
+  const security = useQuery({ queryKey: ['security'], queryFn: async () => unwrap(await api.securityStatus()) })
+  const afterRecovery = useAuth((state) => state.newCodeAfterRecovery)
+  const codeRequired = afterRecovery || (!!security.data?.vaultKey && !security.data.recoveryCode)
+  const waitingOn = security.data && !security.data.vaultKey ? security.data.waitingOn.join('; ') : ''
+  useEffect(() => {
+    if (!waitingOn) return
+    toast.error(
+      `Your vault can’t move to its new, stronger encryption yet: ${waitingOn}. Delete or re-enter what’s listed, then lock and unlock.`
+    )
+  }, [waitingOn])
   const paletteRef = useRef(paletteOpen)
   paletteRef.current = paletteOpen
   const [dragging, setDragging] = useState(0)
@@ -171,6 +188,9 @@ export function AppFrame() {
           <Kbd className="ml-auto bg-background/60">{MOD}K</Kbd>
         </button>
         <ThemeToggle />
+        <IconButton label="Change master password" onClick={() => setChangingPassword(true)}>
+          <Key size={17} />
+        </IconButton>
         <IconButton label="Lock vault" shortcut={`${MOD}L`} onClick={lock}>
           <LockKey size={17} />
         </IconButton>
@@ -181,6 +201,23 @@ export function AppFrame() {
       </main>
 
       <SearchConsole open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <ChangePassword
+        open={changingPassword}
+        onOpenChange={setChangingPassword}
+        onNewRecoveryCode={() => {
+          setChangingPassword(false)
+          setNewCode(true)
+        }}
+      />
+      <RecoverySetup
+        open={codeRequired || newCode}
+        required={codeRequired}
+        onDone={() => {
+          setNewCode(false)
+          useAuth.setState({ newCodeAfterRecovery: false })
+          void security.refetch()
+        }}
+      />
       <HistoryGestures page={mainRef} />
 
       <AnimatePresence>

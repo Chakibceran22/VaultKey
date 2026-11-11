@@ -23,6 +23,17 @@ export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: VaultErro
 
 export interface VaultStatusResponse {
   status: AuthStatus
+  /** Whether a recovery code can reset a forgotten master password. */
+  recoveryCode: boolean
+}
+
+/** How the vault is protected (once unlocked). */
+export interface SecurityStatus {
+  /** Its data is under a random vault key (not yet: an older vault waiting to move). */
+  vaultKey: boolean
+  recoveryCode: boolean
+  /** What keeps an older vault from moving: items that can't be read, named. */
+  waitingOn: string[]
 }
 
 export interface DomainRecord {
@@ -334,8 +345,21 @@ export interface EnvSecretInput {
 export interface VaultApi {
   getVaultStatus: () => Promise<IpcResult<VaultStatusResponse>>
   createVault: (masterPassword: string) => Promise<IpcResult<void>>
-  unlockVault: (masterPassword: string) => Promise<IpcResult<{ valid: boolean }>>
+  /** `upgradedBackup`: this unlock moved an older vault to its vault key; the backup of it as it was. */
+  unlockVault: (masterPassword: string) => Promise<IpcResult<{ valid: boolean; upgradedBackup?: string }>>
   lockVault: () => Promise<IpcResult<void>>
+  /** Wraps the vault key with a new master password (the data doesn't change; the recovery code keeps working). */
+  changeMasterPassword: (currentPassword: string, newPassword: string) => Promise<IpcResult<void>>
+  securityStatus: () => Promise<IpcResult<SecurityStatus>>
+  /** A new recovery code to show once; it is kept in Rust until saved. */
+  newRecoveryCode: () => Promise<IpcResult<{ words: string[] }>>
+  /** Saves the code just shown, once three of its words (positions from 1) and the master password match. */
+  saveRecoveryCode: (
+    masterPassword: string,
+    answers: { position: number; word: string }[]
+  ) => Promise<IpcResult<void>>
+  /** A forgotten master password: the recovery code sets a new one, and the vault unlocks. */
+  recoverVault: (recoveryCode: string, newPassword: string) => Promise<IpcResult<void>>
   fetchDomains: () => Promise<IpcResult<{ domains: DomainRecord[] }>>
   registerDomain: (name: string) => Promise<IpcResult<{ id: number }>>
   deleteDomain: (domainId: number) => Promise<IpcResult<void>>

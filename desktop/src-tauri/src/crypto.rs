@@ -13,7 +13,7 @@
 //! Only the verifier is stored. The encryption key lives in memory while unlocked and is
 //! zeroised on lock.
 
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
@@ -88,6 +88,11 @@ fn unsupported_kdf() -> VaultError {
 
 /// Argon2id → HKDF key separation. Equivalent to `deriveKeys` in the old renderer.
 pub fn derive_keys(password: &str, kdf: &KdfParams) -> VaultResult<DerivedKeys> {
+    derive_keys_from_bytes(password.as_bytes(), kdf)
+}
+
+/// [`derive_keys`] from any secret, such as a recovery code's random bytes.
+pub fn derive_keys_from_bytes(secret: &[u8], kdf: &KdfParams) -> VaultResult<DerivedKeys> {
     let hash_length = usize::try_from(kdf.hash_length).map_err(|_| unsupported_kdf())?;
     let params = Params::new(
         kdf.memory_kib,
@@ -100,7 +105,7 @@ pub fn derive_keys(password: &str, kdf: &KdfParams) -> VaultResult<DerivedKeys> 
 
     let mut master = Zeroizing::new(vec![0u8; hash_length]);
     argon2
-        .hash_password_into(password.as_bytes(), &kdf.salt, &mut master)
+        .hash_password_into(secret, &kdf.salt, &mut master)
         .map_err(|error| unsupported_kdf().with_detail(error))?;
 
     let hkdf = Hkdf::<Sha256>::new(Some(&kdf.salt), &master);
@@ -115,6 +120,45 @@ pub fn derive_keys(password: &str, kdf: &KdfParams) -> VaultResult<DerivedKeys> 
         auth_key,
         encryption_key,
     })
+}
+
+/// Seals the vault key with a key that opens it (the master password's, a recovery
+/// code's), bound to `label`: a wrapped key can't be moved to another slot.
+pub fn wrap_key(vault_key: &[u8; KEY_LEN], with: &[u8; KEY_LEN], label: &[u8]) -> VaultResult<Vec<u8>> {
+    let iv = random_bytes::<IV_LEN>();
+    let cipher = Aes256Gcm::new_from_slice(with).map_err(|_| VaultError::internal("Encryption failed."))?;
+    let sealed = cipher
+        .encrypt(Nonce::from_slice(&iv), Payload { msg: vault_key, aad: label })
+        .map_err(|_| VaultError::internal("Encryption failed."))?;
+    Ok([&iv[..], &sealed].concat())
+}
+
+/// Opens a key sealed by [`wrap_key`] with the same key and label.
+pub fn unwrap_key(wrapped: &[u8], with: &[u8; KEY_LEN], label: &[u8]) -> VaultResult<SecretKey> {
+    let failure = || VaultError::internal("The vault key could not be opened.");
+    if wrapped.len() != IV_LEN + KEY_LEN + TAG_LEN {
+        return Err(failure());
+    }
+    let (iv, sealed) = wrapped.split_at(IV_LEN);
+    let cipher = Aes256Gcm::new_from_slice(with).map_err(|_| failure())?;
+    let plain = Zeroizing::new(
+        cipher
+            .decrypt(Nonce::from_slice(iv), Payload { msg: sealed, aad: label })
+            .map_err(|_| failure())?,
+    );
+    let mut key: SecretKey = Zeroizing::new([0u8; KEY_LEN]);
+    key.copy_from_slice(&plain);
+    Ok(key)
+}
+
+/// A new random vault key.
+pub fn new_vault_key() -> SecretKey {
+    Zeroizing::new(random_bytes::<KEY_LEN>())
+}
+
+/// Constant-time equality of two keys.
+pub fn same_key(a: &SecretKey, b: &SecretKey) -> bool {
+    bool::from(a[..].ct_eq(&b[..]))
 }
 
 /// scrypt verifier of the auth key. Equivalent to `deriveVerifier` in the old main process.
@@ -175,6 +219,20 @@ pub fn decrypt_bytes(sealed: &[u8], key: &[u8; KEY_LEN]) -> VaultResult<Zeroizin
             .decrypt(Nonce::from_slice(iv), body)
             .map_err(|_| failure())?,
     ))
+}
+
+/// The exact plaintext bytes of a base64 credential ciphertext (no text decoding), for
+/// re-encrypting it byte for byte.
+pub fn decrypt_base64_bytes(encoded: &str, key: &[u8; KEY_LEN]) -> VaultResult<Zeroizing<Vec<u8>>> {
+    let raw = BASE64
+        .decode(encoded)
+        .map_err(|_| VaultError::internal("A stored credential could not be decrypted."))?;
+    decrypt_bytes(&raw, key)
+}
+
+/// Bytes sealed into the base64 credential format (what [`encrypt`] writes).
+pub fn encrypt_bytes_base64(plaintext: &[u8], key: &[u8; KEY_LEN]) -> VaultResult<String> {
+    Ok(BASE64.encode(encrypt_bytes(plaintext, key)?))
 }
 
 pub fn decrypt(encoded: &str, key: &[u8; KEY_LEN]) -> VaultResult<Zeroizing<String>> {
