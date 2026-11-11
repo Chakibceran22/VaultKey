@@ -3,6 +3,8 @@
 @import '@fontsource-variable/jetbrains-mono';
 
 @custom-variant dark (&:is(.dark *));
+/* Windows only (main.tsx sets data-platform): macOS and Linux are untouched. */
+@custom-variant windows (&:is([data-platform='windows'] *));
 
 /*
  * VaultKey uses the DevNotes design language: a calm canvas, one indigo accent,
@@ -209,6 +211,14 @@
   }
   *::-webkit-scrollbar-thumb:hover {
     background: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+  }
+  /* WebView2 (Chromium) ignores the ::-webkit-scrollbar rules above whenever
+     scrollbar-width/-color are set, and draws Windows' bar with arrow buttons.
+     Unset them there so Windows gets the same slim thumb, without arrows. */
+  [data-platform='windows'],
+  [data-platform='windows'] * {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
   }
 }
 

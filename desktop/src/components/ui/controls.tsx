@@ -36,15 +36,21 @@ export function Segmented<T extends string>({
   label,
   value,
   options,
-  onChange
+  onChange,
+  className
 }: {
   label: string
   value: T
   options: { value: T; label: string }[]
   onChange: (value: T) => void
+  className?: string
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-lg border bg-secondary/70 p-0.5">
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cn('inline-flex rounded-lg border bg-secondary/70 p-0.5', className)}
+    >
       {options.map((option) => {
         const checked = option.value === value
         return (

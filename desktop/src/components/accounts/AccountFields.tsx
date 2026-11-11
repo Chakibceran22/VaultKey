@@ -105,9 +105,12 @@ export function AccountFields({
       )}
 
       <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-3">
+        {/* Side by side fits in SF Pro, not in Inter (Windows): there the label goes
+            above, as on the other fields, and the choice spans the width. */}
+        <div className="flex items-center justify-between gap-3 windows:flex-col windows:items-stretch windows:gap-1.5">
           <span className="text-[13px] font-medium text-heading">How it signs in</span>
           <Segmented
+            className="windows:flex windows:*:flex-1"
             label="How this account signs in"
             value={draft.method}
             onChange={(method) => set('method', method)}
