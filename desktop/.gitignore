@@ -6,7 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-docs
+# docs/ stays local, except the README's screenshots.
+docs/*
+!docs/screenshots/
 
 node_modules
 dist
