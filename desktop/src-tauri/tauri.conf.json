@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "identifier": "com.chakibceran22.vaultkey",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm bridge:dev && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build && pnpm bridge:release",
     "frontendDist": "../dist"
   },
   "app": {
@@ -40,6 +40,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "externalBin": ["binaries/vaultkey-bridge"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

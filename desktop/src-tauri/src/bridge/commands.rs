@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager, Webview};
 use super::{Bridge, BridgeSettings, PairingPrompt};
 use crate::commands::MAIN_WINDOW;
 use crate::error::{VaultError, VaultResult, log_failure};
+use crate::vault::UnmatchedWebsites;
 
 async fn run<T, F>(operation: &'static str, app: AppHandle, webview: Webview, job: F) -> VaultResult<T>
 where
@@ -54,4 +55,22 @@ pub async fn pending_pairing(app: AppHandle, webview: Webview) -> VaultResult<Op
 #[tauri::command]
 pub async fn answer_pairing(app: AppHandle, webview: Webview, id: u64, approve: bool) -> VaultResult<()> {
     run("answer_pairing", app, webview, move |bridge| bridge.answer(id, approve)).await
+}
+
+/// Saved websites the extension can't match ("GitHub"), each with an address to offer.
+#[tauri::command]
+pub async fn unmatched_websites(app: AppHandle, webview: Webview) -> VaultResult<UnmatchedWebsites> {
+    run("unmatched_websites", app, webview, |bridge| bridge.unmatched_websites()).await
+}
+
+/// Renames a saved website to an address the extension matches, then lists what's left.
+/// Main window only, like every command: the extension has no way to ask for it.
+#[tauri::command]
+pub async fn set_website_address(
+    app: AppHandle,
+    webview: Webview,
+    domain_id: i64,
+    address: String,
+) -> VaultResult<UnmatchedWebsites> {
+    run("set_website_address", app, webview, move |bridge| bridge.set_website_address(domain_id, &address)).await
 }

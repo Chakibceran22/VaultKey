@@ -13,8 +13,21 @@
 import { explain, outcomeOf, type Caller, type Outcome } from './actions'
 import { toBase64 } from './bytes'
 import type { FillRequest } from './content-messages'
-import { parseCode, parseMatches, parseRevealed, type Card } from './inner'
-import type { FieldKind, FoundReply, MenuCard, MenuKey, MenuRequest, MenuUpdate, OpenReply, TokenReply, VerifyReply } from './inline-messages'
+import { parseCode, parseMatches, parseRevealed, type Card, type Matches } from './inner'
+import {
+  MAX_SSO_HINTS,
+  type FieldKind,
+  type FoundReply,
+  type MenuCard,
+  type MenuKey,
+  type MenuRequest,
+  type MenuUpdate,
+  type OpenReply,
+  type SsoReply,
+  type TokenReply,
+  type VerifyReply,
+} from './inline-messages'
+import { cardName, cardTile, cardWhere, ssoText } from './labels'
 import type { LinkState } from './link'
 
 /** A frame, as the browser describes the sender of a message. */
@@ -89,18 +102,13 @@ function hostOf(url: string): string {
   }
 }
 
-function menuCard(card: Card): MenuCard {
-  return {
-    h: card.h,
-    name: card.username ?? card.email,
-    where: card.tier === 'exact' ? (card.username ? card.email : card.host) : `Saved for ${card.host}`,
-    hasTotp: card.hasTotp,
-    fillable: card.method === 'password',
-  }
+/** A menu row; `fillable: false` for an account that signs in with another (a hint). */
+function menuCard(card: Card, fillable: boolean): MenuCard {
+  return { h: card.h, name: cardName(card), where: cardWhere(card), tile: cardTile(card), hasTotp: card.hasTotp, fillable }
 }
 
 export class Inline {
-  private cache = new Map<string, { at: number; cards: Card[] }>()
+  private cache = new Map<string, { at: number; matches: Matches }>()
   private tokens = new Map<string, { frame: Frame; until: number }>()
   private menus = new Map<string, Menu>()
   private picked = new Map<number, { email: string; username: string | null; at: number }>()
@@ -146,18 +154,27 @@ export class Inline {
     return true
   }
 
-  private async cards(frame: Frame): Promise<Card[] | null> {
-    // Matching reads only the scheme, host and port: one answer per origin.
+  private async matches(frame: Frame): Promise<Matches | null> {
+    // Matching reads the frame's scheme, host and port, and the tab's address: on a
+    // provider's page (accounts.google.com), which site you're signing in to comes from the
+    // tab's query (`forSite`, and the order). One answer per frame origin and tab address.
     const origin = originOf(frame.url)
     if (!origin) return null
-    const hit = this.cache.get(origin)
-    if (hit && this.now() - hit.at < CACHE_MS) return hit.cards
+    const key = `${origin} ${frame.tabUrl}`
+    const now = this.now()
+    const hit = this.cache.get(key)
+    if (hit && now - hit.at < CACHE_MS) return hit.matches
     if (!this.spend(frame.tabId)) return null
     const reply = await this.vault.call('match', { tabUrl: frame.tabUrl, frameUrl: frame.url })
     const matches = reply.ok ? parseMatches(reply.r) : null
     if (!matches) return null
-    this.cache.set(origin, { at: this.now(), cards: matches.cards })
-    return matches.cards
+    for (const [old, entry] of this.cache) if (now - entry.at >= CACHE_MS) this.cache.delete(old)
+    this.cache.set(key, { at: now, matches })
+    return matches
+  }
+
+  private async cards(frame: Frame): Promise<Card[] | null> {
+    return (await this.matches(frame))?.cards ?? null
   }
 
   /**
@@ -177,6 +194,17 @@ export class Inline {
     }
     // A sibling subdomain's login ("Saved for app.example.com") waits for a click on the icon.
     return { show: 'icon', auto: usable.some((card) => card.tier === 'exact') }
+  }
+
+  /**
+   * The page has "Continue with …" buttons: the providers this frame's own site's accounts
+   * sign in with, and the badge text for each. Nothing unless VaultKey is unlocked.
+   */
+  async sso(frame: Frame): Promise<SsoReply> {
+    if (this.state().kind !== 'ready') return { hints: [] }
+    const matches = await this.matches(frame).catch(() => null)
+    const hints = matches?.ssoHints.slice(0, MAX_SSO_HINTS) ?? []
+    return { hints: hints.map((hint) => [hint.provider, ssoText(hint)]) }
   }
 
   /** A one-time token for the menu iframe this frame is about to make. */
@@ -217,7 +245,8 @@ export class Inline {
     if (state === 'locked') {
       menu.context = null
       menu.port.post({ type: 'show', state: 'locked', above })
-      return { rows: 1, menu: true, pickable: false }
+      // Its message and its "Open VaultKey" button.
+      return { rows: 2, menu: true, pickable: false }
     }
     if (state !== 'ready') return { rows: 0, menu: true, pickable: false }
     const cards = await this.cards(frame).catch(() => null)
@@ -229,15 +258,20 @@ export class Inline {
       const same = (card: Card) => card.email === recent.email && card.username === recent.username
       usable.sort((a, b) => Number(same(b)) - Number(same(a)))
     }
-    const rows = usable.slice(0, MAX_ROWS)
-    if (rows.length === 0) {
+    // Accounts that sign in with another ("Signs in with Google · you@gmail.com") come after
+    // the ones to fill, as hints: shown, never picked.
+    const hints = kind === 'code' ? [] : cards.filter((card) => card.method === 'linked')
+    const fill = usable.slice(0, MAX_ROWS)
+    const shown = [...fill.map((card) => menuCard(card, true)), ...hints.map((card) => menuCard(card, false))].slice(0, MAX_ROWS)
+    if (shown.length === 0) {
       menu.context = null
       menu.port.post({ type: 'show', state: 'empty', above, site: hostOf(frame.url) })
       return { rows: 1, menu: true, pickable: false }
     }
-    menu.context = { kind, url: frame.url, tabUrl: frame.tabUrl, cards: rows }
-    menu.port.post({ type: 'show', state: 'ready', above, kind, site: hostOf(frame.url), cards: rows.map(menuCard) })
-    return { rows: rows.length, menu: true, pickable: true }
+    // Only fillable cards can be picked.
+    menu.context = { kind, url: frame.url, tabUrl: frame.tabUrl, cards: fill }
+    menu.port.post({ type: 'show', state: 'ready', above, kind, site: hostOf(frame.url), cards: shown })
+    return { rows: shown.length, menu: true, pickable: fill.length > 0 }
   }
 
   key(frame: Frame, key: MenuKey): void {

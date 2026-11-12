@@ -28,6 +28,10 @@ describe('buildManifest', () => {
     expect(manifest).not.toHaveProperty('externally_connectable')
     // Only the inline menu is exposed to pages.
     expect(manifest.web_accessible_resources).toEqual([{ resources: ['menu.html'], matches: ['http://*/*', 'https://*/*'] }])
+    // The content script (an unlisted WXT script, listed here): every http(s) frame, from the start.
+    expect(manifest.content_scripts).toEqual([
+      { matches: ['http://*/*', 'https://*/*'], js: ['content-script.js'], run_at: 'document_start', all_frames: true },
+    ])
     expect(manifest.name).toBe('VaultKey')
   })
 

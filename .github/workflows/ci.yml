@@ -1,0 +1,96 @@
+name: CI
+
+# Checks VaultKey (desktop/) on macOS, Windows and Linux, on every push and pull request:
+#
+#   - the browser bridge (src-tauri/bridge/): its tests, and clippy with warnings as errors;
+#   - the browser extension (extension/): its tests and typecheck;
+#   - the desktop UI's typecheck;
+#   - the app's own Rust tests, on macOS only: on Linux they'd need the WebKitGTK build
+#     packages, and on Windows a full Tauri build, for the same Rust code. The bridge, which
+#     has the Windows- and Linux-specific code (named pipe, registry, sockets), is tested on
+#     all three.
+#
+# Tool versions match release.yml.
+
+on:
+  push:
+    branches: ['**']
+    paths: ['desktop/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['desktop/**', '.github/workflows/ci.yml']
+
+# A newer push to the same branch replaces a run still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            runner: macos-latest
+          - name: Windows
+            runner: windows-latest
+          - name: Linux
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      # The whole workspace: the desktop UI and the extension.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bridge tests
+        working-directory: desktop/src-tauri
+        run: cargo test -p vaultkey-bridge
+
+      - name: Bridge clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy -p vaultkey-bridge --all-targets -- -D warnings
+
+      - name: Extension tests
+        run: pnpm --filter vaultkey-extension test
+
+      - name: Extension typecheck
+        run: pnpm --filter vaultkey-extension typecheck
+
+      - name: Desktop typecheck
+        run: pnpm --filter vaultkey typecheck
+
+      # The app only builds with the bridge in src-tauri/binaries/ (Tauri's externalBin
+      # checks for it on every build, tests included): bridge:dev puts it there.
+      - name: App tests
+        if: runner.os == 'macOS'
+        run: |
+          pnpm bridge:dev
+          cd src-tauri
+          cargo test -p vaultkey

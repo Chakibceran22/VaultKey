@@ -20,6 +20,13 @@ export function buildManifest(mode: string) {
         description: 'Fill the login for this page',
       },
     },
+    // The script that finds login fields and fills them (entrypoints/content-script.ts), in
+    // every http(s) frame from the start. Listed here rather than as a WXT content script:
+    // WXT's wrapper for those is ~2 KB of unused code (the script's budget is 20 KB) and
+    // posts the extension's ID to every page.
+    content_scripts: [
+      { matches: ['http://*/*', 'https://*/*'], js: ['content-script.js'], run_at: 'document_start' as const, all_frames: true },
+    ],
     // The inline menu (M3): the one page a site may embed, in the content script's iframe.
     // `use_dynamic_url` (so sites can't probe for it) is to be checked in Brave first (M6).
     web_accessible_resources: [{ resources: ['menu.html'], matches: ['http://*/*', 'https://*/*'] }],

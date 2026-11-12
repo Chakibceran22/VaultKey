@@ -1,6 +1,7 @@
 //! VaultKey: Tauri shell around the vault service.
 
 mod account_details;
+mod background;
 mod bridge;
 mod browsers;
 mod commands;
@@ -159,6 +160,8 @@ pub fn run() {
                 );
             }
             app.manage(Vault::open(database_path));
+            // Settings and the tray icon first: the idle timer reads the auto-lock delay.
+            background::start(app.handle());
             idle::start(app.handle());
             bridge::start(app.handle());
             create_main_window(app.handle())?;
@@ -169,6 +172,15 @@ pub fn run() {
                 return;
             }
             match event {
+                // Background mode (`background.rs`): closing hides the window, and the vault
+                // stays unlocked until it locks itself, so the browser extension keeps
+                // working. The tray icon, the Dock and the extension bring it back.
+                WindowEvent::CloseRequested { api, .. } if background::keeps_running(window.app_handle()) => {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("[vault] could not hide the window: {error}");
+                    }
+                }
                 // Electron revoked the renderer's session when its window was destroyed.
                 WindowEvent::Destroyed => lock_vault(window.app_handle()),
                 // Files dragged onto the window: their paths stay in Rust. The page is
@@ -277,15 +289,20 @@ pub fn run() {
             bridge::commands::revoke_browser,
             bridge::commands::pending_pairing,
             bridge::commands::answer_pairing,
+            bridge::commands::unmatched_websites,
+            bridge::commands::set_website_address,
+            background::background_settings,
+            background::set_background_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building VaultKey");
 
     app.run(|app, event| match event {
         // macOS, like Electron's `window-all-closed` + `activate`: closing the window
-        // keeps the app in the Dock (vault locked); clicking the Dock icon reopens it.
-        // `code: None` is only emitted when the last window closes; Cmd+Q / Quit go
-        // through applicationWillTerminate → `RunEvent::Exit` and still quit.
+        // keeps the app in the Dock (vault locked, or unlocked with the window hidden in
+        // background mode); clicking the Dock icon shows it again, made anew if it was
+        // destroyed. `code: None` is only emitted when the last window closes; Cmd+Q /
+        // Quit (the tray's too) go through `RunEvent::Exit` and still quit.
         #[cfg(target_os = "macos")]
         RunEvent::ExitRequested {
             api, code: None, ..
@@ -294,13 +311,7 @@ pub fn run() {
         RunEvent::Reopen {
             has_visible_windows: false,
             ..
-        } => {
-            if app.get_webview_window(MAIN_WINDOW).is_none()
-                && let Err(error) = create_main_window(app)
-            {
-                eprintln!("[vault] could not reopen the window: {error}");
-            }
-        }
+        } => background::show_main_window(app),
         // Mirrors Electron's before-quit: zeroise the key, checkpoint and close SQLite.
         RunEvent::Exit => {
             if let Some(vault) = app.try_state::<Vault>() {

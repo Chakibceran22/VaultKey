@@ -11,6 +11,8 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
+    "bridge:dev": "node scripts/bundle-bridge.mjs",
+    "bridge:release": "node scripts/bundle-bridge.mjs --release",
     "vault:snapshot": "node scripts/vault-tools.mjs snapshot",
     "vault:rehearse": "node scripts/vault-tools.mjs rehearse",
     "vault:where": "node scripts/vault-tools.mjs where"

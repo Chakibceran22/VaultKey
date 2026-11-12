@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tokio::sync::watch;
-use vaultkey_bridge::{api, message, noise};
+use vaultkey_bridge::{api, matcher::Saved, message, noise};
 use zeroize::Zeroizing;
 
 use crate::account_details::{self, AccountDetails, Connections, NewFactor, PayloadChange};
@@ -849,6 +849,33 @@ impl Vault {
         self.require_unlocked()?;
         let domain_id = validate_id(domain_id, "domain id")?;
         self.with_database(|database| store::delete_domain(database.connection(), domain_id))
+    }
+
+    /// Gives a saved website a web address the browser extension can match ("GitHub" →
+    /// "github.com"); its accounts stay with it. A name that is still only a name is
+    /// refused: the point is to make the website matchable. So is an address another
+    /// website already is, in any case or form ("GitHub.com", "https://github.com"): one
+    /// site would be saved twice.
+    pub fn rename_domain(&self, domain_id: i64, name: &str) -> VaultResult<()> {
+        self.require_unlocked()?;
+        let domain_id = validate_id(domain_id, "domain id")?;
+        let name = validate_domain_name(name)?;
+        let Some(site) = browsers::site_key(&name) else {
+            return Err(VaultError::invalid_input("Enter a web address, like github.com."));
+        };
+        // Checked and written under the one database lock: nothing is saved in between.
+        let renamed = self.with_database(|database| {
+            let conn = database.connection();
+            if let Some(existing) = browsers::same_site(conn, &site, domain_id)? {
+                return Err(VaultError::already_exists(format!("That address is already saved, as {existing}.")));
+            }
+            browsers::rename_domain(conn, domain_id, &name)
+                .map_err(|error| workspace::renamed(error, "A website with that address is already saved."))
+        })?;
+        if !renamed {
+            return Err(VaultError::not_found("Domain not found."));
+        }
+        Ok(())
     }
 
     // ── credentials ─────────────────────────────────────────────────────────
@@ -1797,6 +1824,23 @@ pub struct PairedBrowser {
     pub last_seen_at: String,
 }
 
+/// A saved website the extension can't match ("GitHub"), as Settings lists it.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmatchedWebsite {
+    pub domain_id: i64,
+    pub name: String,
+    /// An address to offer in one click ("github.com"), or `None`.
+    pub suggestion: Option<String>,
+    /// How many accounts are saved under it.
+    pub accounts: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnmatchedWebsites {
+    pub websites: Vec<UnmatchedWebsite>,
+}
+
 impl Vault {
     /// Locked or unlocked, now and at each change.
     pub fn watch_unlocked(&self) -> watch::Receiver<bool> {
@@ -1923,52 +1967,147 @@ impl Vault {
         self.with_database(|db| Ok(db.connection().total_changes()))
     }
 
-    /// Every account, for the extension's matcher: websites and names only, nothing
-    /// decrypted.
+    /// Every account and every project service's own login, for the extension's matcher
+    /// and search: no password, and nothing decrypted but the usernames of service logins
+    /// it can use (they're sealed). A service login counts only when its service has an
+    /// address the matcher reads (`https://coolify.example.com`, `203.0.113.7:22`): one
+    /// with no address, or only a name, could never be filled.
     pub fn extension_accounts(&self) -> VaultResult<Vec<api::Account>> {
-        self.require_unlocked()?;
-        self.with_database(|db| {
-            let conn = db.connection();
-            let with_codes = browsers::accounts_with_authenticator(conn)?;
-            Ok(store::list_accounts(conn)?
-                .into_iter()
-                .map(|account| api::Account {
-                    has_totp: with_codes.contains(&account.id),
-                    id: account.id,
-                    website: account.domain_name,
-                    email: account.email,
-                    username: account.username,
-                    has_password: account.has_password,
-                })
-                .collect())
-        })
-    }
-
-    /// One account's login, decrypted for one fill (the extension asked with a handle the
-    /// bridge checked against the page).
-    pub fn extension_login(&self, account: i64) -> VaultResult<Option<api::Login>> {
         let key = self.session_key()?;
-        let Some(row) = self.with_database(|db| browsers::login(db.connection(), account))? else {
-            return Ok(None);
-        };
-        let password = crypto::decrypt(&row.password, &key)?;
-        Ok(Some(api::Login { email: row.email, username: row.username, password }))
+        let (accounts, with_codes, mut sign_in, logins) = self.with_database(|db| {
+            let conn = db.connection();
+            Ok((
+                store::list_accounts(conn)?,
+                browsers::accounts_with_authenticator(conn)?,
+                browsers::sign_in_links(conn)?,
+                browsers::service_logins(conn)?,
+            ))
+        })?;
+        let mut listed = Vec::with_capacity(accounts.len() + logins.len());
+        listed.extend(accounts.into_iter().map(|account| api::Account {
+            kind: api::LoginKind::Account,
+            id: account.id,
+            title: account.domain_name.clone(),
+            website: account.domain_name,
+            email: account.email,
+            username: account.username,
+            has_password: account.has_password,
+            has_totp: with_codes.contains(&account.id),
+            signs_in_with: sign_in.remove(&account.id).unwrap_or_default(),
+        }));
+        for login in logins {
+            if matches!(Saved::parse(&login.url), Saved::NameOnly) {
+                continue;
+            }
+            listed.push(api::Account {
+                kind: api::LoginKind::ServiceLogin,
+                id: login.id,
+                title: login.service,
+                website: login.url,
+                // A service login has a username only: the cards show it where an
+                // account's email goes.
+                email: open_note(Some(login.username), &key)?,
+                username: None,
+                has_password: login.has_password,
+                has_totp: false,
+                signs_in_with: Vec::new(),
+            });
+        }
+        Ok(listed)
     }
 
-    /// One account's current authenticator code, if it has a setup key.
-    pub fn extension_code(&self, account: i64) -> VaultResult<Option<api::AuthCode>> {
+    /// One login, decrypted for one fill (the extension asked with a handle the bridge
+    /// checked against the page). `None`: no such account or service login. A service
+    /// login's username comes as the email, like on its card; one without a password
+    /// comes with an empty one, like an account saved without.
+    pub fn extension_login(&self, kind: api::LoginKind, id: i64) -> VaultResult<Option<api::Login>> {
+        let key = self.session_key()?;
+        match kind {
+            api::LoginKind::Account => {
+                let Some(row) = self.with_database(|db| browsers::login(db.connection(), id))? else {
+                    return Ok(None);
+                };
+                let password = crypto::decrypt(&row.password, &key)?;
+                Ok(Some(api::Login { email: row.email, username: row.username, password }))
+            }
+            api::LoginKind::ServiceLogin => {
+                let Some(row) = self.with_database(|db| browsers::service_login(db.connection(), id))? else {
+                    return Ok(None);
+                };
+                let password = match row.password {
+                    Some(sealed) => {
+                        let plain = crypto::decrypt_bytes(&sealed, &key)?;
+                        let text = std::str::from_utf8(&plain)
+                            .map_err(|_| VaultError::internal("A stored secret could not be decrypted."))?;
+                        Zeroizing::new(text.to_owned())
+                    }
+                    None => Zeroizing::new(String::new()),
+                };
+                Ok(Some(api::Login { email: open_note(Some(row.username), &key)?, username: None, password }))
+            }
+        }
+    }
+
+    /// One account's current authenticator code, if it has a setup key. Service logins
+    /// keep no authenticator: never a code.
+    pub fn extension_code(&self, kind: api::LoginKind, id: i64) -> VaultResult<Option<api::AuthCode>> {
         self.require_unlocked()?;
-        let Some(factor) = self.with_database(|db| browsers::authenticator_of(db.connection(), account))? else {
+        if matches!(kind, api::LoginKind::ServiceLogin) {
+            return Ok(None);
+        }
+        let Some(factor) = self.with_database(|db| browsers::authenticator_of(db.connection(), id))? else {
             return Ok(None);
         };
         let code = self.factor_code(factor)?;
         Ok(Some(api::AuthCode { code: code.code.clone(), expires_at: code.expires_at }))
     }
 
+    /// Saved websites the extension can never match, because they're a name and not an
+    /// address ("GitHub"), each with the address of the service it names, if it's a
+    /// well-known one. Websites without accounts are left out (nothing to fill there), and
+    /// so is a suggestion another website already is ("GitHub.com" saved too): renaming to
+    /// it would be refused.
+    pub fn unmatched_websites(&self) -> VaultResult<UnmatchedWebsites> {
+        self.require_unlocked()?;
+        let domains = self.with_database(|db| store::list_domains(db.connection()))?;
+        let taken: std::collections::HashSet<String> =
+            domains.iter().filter_map(|domain| browsers::site_key(&domain.name)).collect();
+        let mut websites: Vec<UnmatchedWebsite> = domains
+            .iter()
+            .filter(|domain| domain.count.credentials > 0 && matches!(Saved::parse(&domain.name), Saved::NameOnly))
+            .map(|domain| UnmatchedWebsite {
+                domain_id: domain.id,
+                name: domain.name.clone(),
+                suggestion: browsers::suggest_address(&domain.name)
+                    .filter(|address| browsers::site_key(address).is_some_and(|site| !taken.contains(&site))),
+                accounts: domain.count.credentials,
+            })
+            .collect();
+        websites.sort_by_cached_key(|website| (website.name.to_lowercase(), website.domain_id));
+        Ok(UnmatchedWebsites { websites })
+    }
+
     /// A paired browser just opened a session ("last used").
     pub fn browser_seen(&self, client_id: &noise::ClientId) -> VaultResult<()> {
         self.require_unlocked()?;
         self.with_database(|db| browsers::touch_client(db.connection(), client_id))
+    }
+}
+
+// ── app settings (schema v9) ────────────────────────────────────────────────
+
+impl Vault {
+    /// The app's settings as stored (`background.rs` reads them). Nothing secret, and some
+    /// apply before unlock, so they're readable while locked.
+    pub fn app_settings(&self) -> VaultResult<std::collections::BTreeMap<String, String>> {
+        self.with_database(|db| crate::background::read_settings(db.connection()))
+    }
+
+    /// Saves settings, all or none. Unlocked only: they're changed in Settings, and a
+    /// locked window has no business choosing how soon the vault locks next time.
+    pub fn set_app_settings(&self, values: &[(&str, String)]) -> VaultResult<()> {
+        self.require_unlocked()?;
+        self.with_database(|db| db.transaction(|tx| crate::background::write_settings(tx, values)))
     }
 }
 
@@ -3946,20 +4085,20 @@ mod tests {
         assert_eq!((mine.website.as_str(), mine.email.as_str(), mine.has_password, mine.has_totp), ("github.com", "me@x.com", true, true));
         assert!(!accounts.iter().find(|a| a.id == other).unwrap().has_totp);
 
-        let login = vault.extension_login(account).unwrap().unwrap();
+        let login = vault.extension_login(api::LoginKind::Account, account).unwrap().unwrap();
         assert_eq!((login.email.as_str(), login.username.as_deref(), login.password.as_str()), ("me@x.com", Some("alice"), "hunter2"));
-        assert!(vault.extension_login(9999).unwrap().is_none());
-        let code = vault.extension_code(account).unwrap().unwrap();
+        assert!(vault.extension_login(api::LoginKind::Account, 9999).unwrap().is_none());
+        let code = vault.extension_code(api::LoginKind::Account, account).unwrap().unwrap();
         assert!(code.code.len() == 6 && code.code.bytes().all(|b| b.is_ascii_digit()));
-        assert!(vault.extension_code(other).unwrap().is_none());
+        assert!(vault.extension_code(api::LoginKind::Account, other).unwrap().is_none());
 
         vault.create_credential(credential(github, "third@x.com", "x")).unwrap();
         assert!(vault.revision().unwrap() > before, "a write moves the revision");
 
         vault.lock();
         assert!(vault.extension_accounts().is_err());
-        assert!(vault.extension_login(account).is_err());
-        assert!(vault.extension_code(account).is_err());
+        assert!(vault.extension_login(api::LoginKind::Account, account).is_err());
+        assert!(vault.extension_code(api::LoginKind::Account, account).is_err());
     }
 
     #[test]
@@ -3983,5 +4122,280 @@ mod tests {
         unlocked.borrow_and_update();
         assert!(!vault.unlock("not the password").unwrap().valid);
         assert!(!unlocked.has_changed().unwrap());
+    }
+
+    /// The one listed with this kind, title and email.
+    fn listed<'a>(accounts: &'a [api::Account], kind: api::LoginKind, title: &str, email: &str) -> &'a api::Account {
+        accounts
+            .iter()
+            .find(|a| a.kind == kind && a.title == title && a.email == email)
+            .unwrap_or_else(|| panic!("{title} · {email} isn't listed"))
+    }
+
+    #[test]
+    fn the_extension_reads_sign_in_links_and_service_logins() {
+        use crate::validation::ServiceLoginInput;
+        use vaultkey_bridge::api::LoginKind::{Account, ServiceLogin};
+        let (_directory, vault) = unlocked_vault();
+        let google = account(&vault, "google.com", "me@gmail.com");
+        let github = account(&vault, "github.com", "me@x.com");
+        let vercel_site = vault.create_domain("vercel.com").unwrap();
+        let vercel = vault.create_credential(credential(vercel_site, "me@gmail.com", "")).unwrap();
+        vault.set_sign_in_links(vercel, &[github, google]).unwrap();
+        // Recovery isn't a way to sign in.
+        vault.set_account_links(github, workspace::RECOVERY, &[google]).unwrap();
+
+        let shop = project(&vault, "Shaba");
+        let login = |username: &str, password: Option<&str>| ServiceLoginInput {
+            id: None,
+            username: username.into(),
+            password: password.map(Into::into),
+            note: "only the owner".into(),
+        };
+        let service = |name: &str, url: &str, logins: Vec<ServiceLoginInput>| ServiceInput {
+            name: name.into(),
+            url: url.into(),
+            accounts: Vec::new(),
+            logins,
+        };
+        vault.create_service(shop, &service("Prod server", "203.0.113.7:8443", vec![login("root", Some("hunter2")), login("deploy", None)])).unwrap();
+        vault.create_service(shop, &service("Coolify", "https://coolify.example.com/login", vec![login("admin@example.com", Some("c00l"))])).unwrap();
+        // No address, or only a name: these could never be filled, so they aren't listed.
+        vault.create_service(shop, &service("Old box", "", vec![login("nobody", Some("x"))])).unwrap();
+        vault.create_service(shop, &service("NAS", "Synology", vec![login("nas-admin", Some("x"))])).unwrap();
+
+        let before = vault.revision().unwrap();
+        let accounts = vault.extension_accounts().unwrap();
+        assert_eq!(vault.revision().unwrap(), before, "reading changes nothing");
+
+        // Accounts: the website as typed is the title; sign-in links in id order.
+        let vercel_listed = listed(&accounts, Account, "vercel.com", "me@gmail.com");
+        assert_eq!((vercel_listed.id, vercel_listed.has_password, vercel_listed.signs_in_with.as_slice()), (vercel, false, &[google, github][..]));
+        let github_listed = listed(&accounts, Account, "github.com", "me@x.com");
+        assert_eq!((github_listed.website.as_str(), github_listed.username.as_deref()), ("github.com", Some("alice")));
+        assert!(github_listed.signs_in_with.is_empty(), "a recovery link isn't a sign-in");
+
+        // Service logins: the service's name and address, the username where the email
+        // goes, no codes, no links.
+        let root = listed(&accounts, ServiceLogin, "Prod server", "root");
+        assert_eq!(
+            (root.website.as_str(), root.username.as_deref(), root.has_password, root.has_totp, root.signs_in_with.is_empty()),
+            ("203.0.113.7:8443", None, true, false, true)
+        );
+        let deploy = listed(&accounts, ServiceLogin, "Prod server", "deploy");
+        assert!(!deploy.has_password);
+        let logins: Vec<&str> = accounts.iter().filter(|a| a.kind == ServiceLogin).map(|a| a.email.as_str()).collect();
+        assert_eq!(logins, ["admin@example.com", "root", "deploy"], "by service name, then the service's order");
+        assert_eq!(accounts.len(), 6);
+
+        // A login by its kind: ids are counted per table, so the first service login and
+        // the first account share a number.
+        assert_eq!(root.id, google);
+        let filled = vault.extension_login(ServiceLogin, root.id).unwrap().unwrap();
+        assert_eq!((filled.email.as_str(), filled.username.as_deref(), filled.password.as_str()), ("root", None, "hunter2"));
+        assert_eq!(vault.extension_login(Account, root.id).unwrap().unwrap().email, "me@gmail.com");
+        assert!(vault.extension_login(ServiceLogin, deploy.id).unwrap().unwrap().password.is_empty());
+        assert!(vault.extension_login(ServiceLogin, 9999).unwrap().is_none());
+
+        // Codes: an account's authenticator, never a service login's (even one sharing
+        // that account's number).
+        vault
+            .create_factor(google, FactorInput { kind: "authenticator".into(), label: String::new(), device_id: None, secret: Some("JBSWY3DPEHPK3PXP".into()) })
+            .unwrap();
+        assert!(vault.extension_code(Account, google).unwrap().is_some());
+        assert!(vault.extension_code(ServiceLogin, root.id).unwrap().is_none());
+
+        // Writes the extension reads move the revision: links, and a service's address.
+        let at = vault.revision().unwrap();
+        vault.set_sign_in_links(vercel, &[google]).unwrap();
+        assert!(vault.revision().unwrap() > at);
+        assert_eq!(listed(&vault.extension_accounts().unwrap(), Account, "vercel.com", "me@gmail.com").signs_in_with, [google]);
+        let nas = vault.workspace().unwrap().services.into_iter().find(|s| s.name == "NAS").unwrap();
+        let at = vault.revision().unwrap();
+        vault.update_service(nas.id, &service("NAS", "nas.local:5001", vec![login("nas-admin", Some("x"))])).unwrap();
+        assert!(vault.revision().unwrap() > at);
+        listed(&vault.extension_accounts().unwrap(), ServiceLogin, "NAS", "nas-admin");
+
+        vault.lock();
+        assert!(matches!(vault.extension_accounts(), Err(e) if e.code == ErrorCode::VaultLocked));
+        assert!(matches!(vault.extension_login(ServiceLogin, root.id), Err(e) if e.code == ErrorCode::VaultLocked));
+        assert!(matches!(vault.extension_code(ServiceLogin, root.id), Err(e) if e.code == ErrorCode::VaultLocked));
+    }
+
+    #[test]
+    fn a_website_saved_as_a_name_can_get_an_address() {
+        let (_directory, vault) = unlocked_vault();
+        let named = account(&vault, "GitHub", "me@x.com");
+        let site = |name: &str| vault.list_domains().unwrap().domains.into_iter().find(|d| d.name == name).map(|d| d.id);
+        let github = site("GitHub").unwrap();
+        vault.create_domain("gitlab.com").unwrap();
+
+        // Checked like a new website's name, and it must be an address no other website is.
+        let too_long = format!("{}.com", "a".repeat(260));
+        for (name, expected) in [
+            ("Still a name", ErrorCode::InvalidInput),
+            ("", ErrorCode::InvalidInput),
+            ("   ", ErrorCode::InvalidInput),
+            ("ssh://203.0.113.7", ErrorCode::InvalidInput),
+            (too_long.as_str(), ErrorCode::InvalidInput),
+            ("gitlab.com", ErrorCode::AlreadyExists),
+            ("GitLab.com", ErrorCode::AlreadyExists),
+            ("https://www.gitlab.com/users/sign_in", ErrorCode::AlreadyExists),
+        ] {
+            let at = vault.revision().unwrap();
+            assert_eq!(code(vault.rename_domain(github, name)), expected, "{name:?}");
+            assert_eq!(vault.revision().unwrap(), at, "{name:?} changed something");
+        }
+        assert_eq!(vault.rename_domain(github, "gitlab.com").unwrap_err().message, "That address is already saved, as gitlab.com.");
+        assert_eq!(code(vault.rename_domain(9999, "github.com")), ErrorCode::NotFound);
+        assert_eq!(code(vault.rename_domain(0, "github.com")), ErrorCode::InvalidInput);
+        assert_eq!(site("GitHub"), Some(github));
+
+        // Renamed (trimmed): its accounts follow, and the revision moves so the extension
+        // reads it again.
+        let at = vault.revision().unwrap();
+        vault.rename_domain(github, "  github.com ").unwrap();
+        assert!(vault.revision().unwrap() > at);
+        assert_eq!(site("github.com"), Some(github));
+        let accounts = vault.extension_accounts().unwrap();
+        let moved = listed(&accounts, api::LoginKind::Account, "github.com", "me@x.com");
+        assert_eq!((moved.id, moved.website.as_str()), (named, "github.com"));
+        // Any address will do: a URL (the same site as its own name), an IP with a port,
+        // localhost.
+        for address in ["https://github.com/login", "192.168.1.10:8000", "localhost"] {
+            vault.rename_domain(github, address).unwrap();
+            assert_eq!(site(address), Some(github));
+        }
+
+        vault.lock();
+        assert_eq!(code(vault.rename_domain(github, "github.com")), ErrorCode::VaultLocked);
+    }
+
+    #[test]
+    fn a_site_saved_in_another_case_or_form_isnt_saved_twice() {
+        let (_directory, vault) = unlocked_vault();
+        account(&vault, "GitHub", "me@x.com");
+        account(&vault, "GitHub.com", "work@x.com");
+        let site = |name: &str| vault.list_domains().unwrap().domains.into_iter().find(|d| d.name == name).map(|d| d.id);
+        let (named, saved) = (site("GitHub").unwrap(), site("GitHub.com").unwrap());
+
+        // github.com is already saved, as "GitHub.com": no one-click rename onto it…
+        let websites = vault.unmatched_websites().unwrap().websites;
+        let shape: Vec<(i64, Option<&str>)> = websites.iter().map(|w| (w.domain_id, w.suggestion.as_deref())).collect();
+        assert_eq!(shape, [(named, None)]);
+        // …and none typed, in any case or form.
+        for address in ["github.com", "GITHUB.COM", "github.com.", "https://www.github.com/login"] {
+            let at = vault.revision().unwrap();
+            let error = vault.rename_domain(named, address).unwrap_err();
+            assert_eq!((error.code, error.message.as_str()), (ErrorCode::AlreadyExists, "That address is already saved, as GitHub.com."), "{address}");
+            assert_eq!(vault.revision().unwrap(), at, "{address} changed something");
+        }
+        assert_eq!(site("GitHub"), Some(named));
+
+        // Another host or another port is another site.
+        vault.rename_domain(named, "github.com:8443").unwrap();
+        vault.rename_domain(named, "gist.github.com").unwrap();
+        // A website can take another form of its own address.
+        vault.rename_domain(saved, "github.com").unwrap();
+        assert_eq!(site("github.com"), Some(saved));
+    }
+
+    #[test]
+    fn lists_the_websites_the_extension_cant_match_with_a_suggestion() {
+        let (_directory, vault) = unlocked_vault();
+        account(&vault, "GitHub", "me@x.com");
+        account(&vault, "GitHub", "work@x.com");
+        account(&vault, "Gmail", "me@gmail.com");
+        account(&vault, "Bank (old)", "me@bank.com");
+        // Not well known: no guess ("ameli.com" isn't ameli.fr).
+        account(&vault, "Ameli", "me@x.com");
+        account(&vault, "Belfius", "me@x.com");
+        account(&vault, "gitlab", "me@x.com");
+        account(&vault, "GitLab.com", "other@x.com");
+        account(&vault, "192.168.1.10:8000", "admin@nas.lan");
+        account(&vault, "localhost", "dev@x.com");
+        account(&vault, "https://accounts.google.com/signin", "me@gmail.com");
+        // No accounts: nothing would be filled there.
+        vault.create_domain("Empty").unwrap();
+
+        let before = vault.revision().unwrap();
+        let websites = vault.unmatched_websites().unwrap().websites;
+        assert_eq!(vault.revision().unwrap(), before, "reading changes nothing");
+        let shape: Vec<(&str, Option<&str>, i64)> =
+            websites.iter().map(|w| (w.name.as_str(), w.suggestion.as_deref(), w.accounts)).collect();
+        assert_eq!(
+            shape,
+            [
+                ("Ameli", None, 1),
+                ("Bank (old)", None, 1),
+                ("Belfius", None, 1),
+                ("GitHub", Some("github.com"), 2),
+                // gitlab.com is saved already (as "GitLab.com"): renaming to it would be
+                // refused.
+                ("gitlab", None, 1),
+                // accounts.google.com is another host than google.com.
+                ("Gmail", Some("google.com"), 1),
+            ]
+        );
+
+        // As the UI gets it.
+        let gmail = websites.iter().find(|w| w.name == "Gmail").unwrap().domain_id;
+        let json = serde_json::to_value(vault.unmatched_websites().unwrap()).unwrap();
+        assert_eq!(
+            json["websites"][5],
+            serde_json::json!({ "domainId": gmail, "name": "Gmail", "suggestion": "google.com", "accounts": 1 })
+        );
+        assert_eq!(json["websites"][0]["suggestion"], serde_json::Value::Null);
+
+        // Taking a suggestion takes it off the list.
+        let github = &websites[3];
+        vault.rename_domain(github.domain_id, github.suggestion.as_deref().unwrap()).unwrap();
+        let left: Vec<String> = vault.unmatched_websites().unwrap().websites.into_iter().map(|w| w.name).collect();
+        assert_eq!(left, ["Ameli", "Bank (old)", "Belfius", "gitlab", "Gmail"]);
+
+        vault.lock();
+        assert_eq!(code(vault.unmatched_websites()), ErrorCode::VaultLocked);
+    }
+
+    #[test]
+    fn suggests_an_address_only_for_a_well_known_service() {
+        for (name, expected) in [
+            ("GitHub", Some("github.com")),
+            ("  Git Hub ", Some("github.com")),
+            ("Netflix", Some("netflix.com")),
+            ("X", Some("x.com")),
+            ("Twitter", Some("x.com")),
+            // Services whose sign-in page is on another site.
+            ("Gmail", Some("google.com")),
+            ("YouTube", Some("google.com")),
+            ("Outlook", Some("live.com")),
+            ("Apple ID", Some("apple.com")),
+            ("AWS", Some("aws.amazon.com")),
+            ("Jira", Some("atlassian.com")),
+            ("Docker Hub", Some("docker.com")),
+            // Anything else: the user types the address. No "<name>.com" guess.
+            ("Ameli", None),
+            ("Belfius", None),
+            ("Epic Games", None),
+            ("my-bank", None),
+            ("Coolify", None),
+            // A work account may sign in elsewhere.
+            ("Microsoft", None),
+            ("Office 365", None),
+            ("Bank (old)", None),
+            ("", None),
+            ("   ", None),
+        ] {
+            assert_eq!(browsers::suggest_address(name).as_deref(), expected, "{name:?}");
+        }
+        // Every known address is one the extension matches and a valid website name, and
+        // every key is found as written (lowercase, nothing stripped), once.
+        let mut keys = std::collections::HashSet::new();
+        for (name, address) in browsers::KNOWN_ADDRESSES {
+            assert!(matches!(Saved::parse(address), Saved::Domain { .. }), "{name} → {address}");
+            assert_eq!(validate_domain_name(address).unwrap(), *address);
+            assert_eq!(browsers::suggest_address(name).as_deref(), Some(*address), "{name}");
+            assert!(keys.insert(*name), "{name} is listed twice");
+        }
     }
 }

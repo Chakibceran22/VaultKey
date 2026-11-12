@@ -367,6 +367,8 @@ export interface RecentFill {
   /** The page it was filled on. */
   site: string
   what: 'login' | 'code'
+  /** Filled on a page the login isn't saved for, after you confirmed it in the extension. */
+  crossSite: boolean
 }
 
 export interface BridgeSettings {
@@ -382,6 +384,27 @@ export interface BridgeSettings {
   /** Newest first. */
   recent: RecentFill[]
 }
+
+/** A saved website the extension can never match: a name ("GitHub"), not an address. */
+export interface UnmatchedWebsite {
+  domainId: number
+  name: string
+  /** An address to offer in one click ("github.com"), or null. */
+  suggestion: string | null
+  /** How many accounts are saved under it. */
+  accounts: number
+}
+
+/** Settings → Background & auto-lock (src-tauri/src/background.rs). Readable while locked. */
+export interface BackgroundSettings {
+  /** Closing the window hides it; VaultKey stays in the menu bar or tray. */
+  keepRunning: boolean
+  /** 1–60. */
+  autoLockMinutes: number
+}
+
+/** Why the vault locked by itself: the `vault://locked` event's payload. */
+export type LockReason = 'idle' | 'sleep' | 'screen-lock' | 'tray'
 
 /** How a pairing dialog ended: `paired` once the browser is saved and knows it. */
 export interface PairingEnded {
@@ -403,7 +426,7 @@ export interface VaultApi {
   /** `upgradedBackup`: this unlock moved an older vault to its vault key; the backup of it as it was. */
   unlockVault: (masterPassword: string) => Promise<IpcResult<{ valid: boolean; upgradedBackup?: string }>>
   lockVault: () => Promise<IpcResult<void>>
-  /** The window is in use: pushes the idle auto-lock (5 minutes) back. */
+  /** The window is in use: pushes the idle auto-lock back. */
   vaultActivity: () => Promise<IpcResult<void>>
   /** Wraps the vault key with a new master password (the data doesn't change; the recovery code keeps working). */
   changeMasterPassword: (currentPassword: string, newPassword: string) => Promise<IpcResult<void>>
@@ -490,4 +513,10 @@ export interface VaultApi {
   /** The pairing dialog open now, for a window that missed the event. */
   pendingPairing: () => Promise<IpcResult<PairingPrompt | null>>
   answerPairing: (id: number, approve: boolean) => Promise<IpcResult<void>>
+  unmatchedWebsites: () => Promise<IpcResult<{ websites: UnmatchedWebsite[] }>>
+  /** Renames that website to `address` (one the extension can match), then lists what's left. */
+  setWebsiteAddress: (domainId: number, address: string) => Promise<IpcResult<{ websites: UnmatchedWebsite[] }>>
+  backgroundSettings: () => Promise<IpcResult<BackgroundSettings>>
+  /** Saves and applies both at once (unlocked only); returns them as saved. */
+  setBackgroundSettings: (settings: BackgroundSettings) => Promise<IpcResult<BackgroundSettings>>
 }

@@ -1,5 +1,6 @@
-import type { CardsResult } from '@/lib/actions'
+import type { CardsResult, SearchResult } from '@/lib/actions'
 import type { Card } from '@/lib/inner'
+import { cardName, cardWhere, savedFor } from '@/lib/labels'
 import type { LinkState } from '@/lib/link'
 import { POPUP_PORT, type PopupRequest, type PopupUpdate } from '@/lib/popup-messages'
 
@@ -24,6 +25,8 @@ const logins = element('logins')
 const site = element('site')
 const cardList = element<HTMLUListElement>('cards')
 const loginsNote = element('logins-note')
+const searchBox = element<HTMLInputElement>('search')
+const otherList = element<HTMLUListElement>('others')
 
 /** Developer instructions only in the dev build; the release popup speaks to users. */
 const DEV = import.meta.env.MODE === 'development'
@@ -65,8 +68,8 @@ function view(state: LinkState): View {
         label: 'VaultKey isn’t open',
         rows: ['Installed', 'Not running', '—', '—'],
         help: DEV
-          ? 'Open VaultKey (pnpm tauri dev, in desktop/) and turn on Browser extension in it: the puzzle-piece button.'
-          : 'Open VaultKey, and check that Browser extension is on in it (the puzzle-piece button).',
+          ? 'Open VaultKey (pnpm tauri dev, in desktop/) and turn on Browser extension in it: Settings (the gear button) → Browser extension.'
+          : 'Open VaultKey, and check that Browser extension is on in it: Settings (the gear button) → Browser extension.',
       }
     case 'app_not_answering':
       return {
@@ -80,7 +83,7 @@ function view(state: LinkState): View {
         tone: 'warn',
         label: 'Turned off in VaultKey',
         rows: [...RUNNING, '—', '—'],
-        help: 'In VaultKey, click the puzzle-piece button and turn the browser extension on.',
+        help: 'In VaultKey, open Settings (the gear button) → Browser extension, and turn it on.',
       }
     case 'not_paired':
       return {
@@ -162,7 +165,11 @@ function render(state: LinkState): void {
     site.textContent = 'Looking for logins…'
     ask({ type: 'cards' })
   }
-  if (!ready) askedForCards = false
+  if (!ready) {
+    askedForCards = false
+    searchBox.value = ''
+    otherList.replaceChildren()
+  }
 }
 
 let askedForCards = false
@@ -182,11 +189,43 @@ function button(label: string, onClick: () => void, primary = false): HTMLButton
 }
 
 function setBusy(busy: boolean): void {
-  for (const each of cardList.querySelectorAll('button')) each.disabled = busy
+  for (const each of document.querySelectorAll<HTMLButtonElement>('#cards button, #others button')) each.disabled = busy
 }
 
 /** The page is http: a fill needs a second, deliberate click. */
 let insecurePage = false
+/** This page's site, as the browser reports it: "Fill gitlab.com's login on example.org?";
+ * and its origin, sent back with each fill: nothing is filled if the tab has moved on. */
+let pageSite = ''
+let pageOrigin = ''
+
+const INSECURE = 'This page isn’t secure (http): anyone on this network can read what’s sent.'
+
+/**
+ * A button that may need a second, deliberate click (`why` says why; null: one click does).
+ * The second isn't clickable at once, so a double-click can't confirm it.
+ */
+function guarded(label: string, again: string, why: string | null, act: () => void, primary = false): HTMLButtonElement {
+  let armed = why === null
+  const made = button(
+    label,
+    () => {
+      if (!armed && why) {
+        armed = true
+        made.textContent = again
+        made.disabled = true
+        setTimeout(() => (made.disabled = false), 600)
+        note(why)
+        return
+      }
+      setBusy(true)
+      note('')
+      act()
+    },
+    primary,
+  )
+  return made
+}
 
 function cardRow(card: Card): HTMLLIElement {
   const row = document.createElement('li')
@@ -195,46 +234,82 @@ function cardRow(card: Card): HTMLLIElement {
   text.className = 'card-text'
   const name = document.createElement('p')
   name.className = 'card-name'
-  name.textContent = card.username ?? card.email
+  name.textContent = cardName(card)
   const where = document.createElement('p')
   where.className = 'card-where'
-  where.textContent = card.tier === 'exact' ? (card.username ? card.email : card.title) : `Saved for ${card.host}`
+  where.textContent = cardWhere(card)
   text.append(name, where)
   row.append(text)
+  // A search result is for another site: using it here takes a confirmation, which is what
+  // VaultKey asks for (`confirmedCrossSite`).
+  const other = card.tier === 'search'
+  const site = savedFor(card)
+  // The page this row's question names: the answer holds for it only.
+  const origin = pageOrigin
   if (card.hasTotp) {
     row.append(
-      button('Copy code', () => {
-        setBusy(true)
-        note('')
-        ask({ type: 'code', h: card.h })
-      }),
+      guarded('Copy code', 'Copy anyway', other ? `Use ${site}’s code on ${pageSite}?` : null, () =>
+        ask({ type: 'code', h: card.h, confirmedCrossSite: other, origin }),
+      ),
     )
   }
+  // `linked`: it signs in with another account (its second line says which): nothing to fill.
   if (card.method === 'password') {
-    let confirmed = !insecurePage
-    const fill = button(
-      'Fill',
-      () => {
-        if (!confirmed) {
-          // First click on an http page: say why, and ask again. Not clickable at once, so
-          // a double-click can't confirm it.
-          confirmed = true
-          fill.textContent = 'Fill anyway'
-          fill.disabled = true
-          setTimeout(() => (fill.disabled = false), 600)
-          note('This page isn’t secure (http): anyone on this network can read what’s sent. Click Fill anyway only if you trust it.')
-          return
-        }
-        setBusy(true)
-        note('')
-        ask({ type: 'fill', h: card.h, confirmedInsecure: insecurePage })
-      },
-      true,
+    const why = [other ? `Fill ${site}’s login on ${pageSite}?` : '', insecurePage ? `${INSECURE} Click Fill anyway only if you trust it.` : '']
+      .filter(Boolean)
+      .join(' ')
+    row.append(
+      guarded('Fill', 'Fill anyway', why || null, () => ask({ type: 'fill', h: card.h, confirmedInsecure: insecurePage, confirmedCrossSite: other, origin }), true),
     )
-    row.append(fill)
   }
   return row
 }
+
+/** Something the list says instead of rows ("Nothing matches…"). */
+function listNote(text: string): HTMLLIElement {
+  const item = document.createElement('li')
+  item.className = 'card card-where'
+  item.textContent = text
+  return item
+}
+
+/** This page's own logins, to leave out of the search results (they're already listed). */
+let pageCards: Card[] = []
+const sameLogin = (a: Card, b: Card) =>
+  a.kind === b.kind && a.title === b.title && a.host === b.host && a.email === b.email && a.username === b.username
+
+function showSearch(result: SearchResult): void {
+  // An answer to an older query (the person kept typing): the newer one is on its way.
+  if (result.kind === 'found' && result.q !== searchBox.value.trim()) return
+  otherList.replaceChildren()
+  switch (result.kind) {
+    case 'no_site':
+      otherList.append(listNote('Open a website to fill a login from here.'))
+      return
+    case 'error':
+      otherList.append(listNote(result.message))
+      return
+    case 'found': {
+      if (!result.q) return
+      pageSite = result.site
+      pageOrigin = result.origin
+      const cards = result.cards.filter((card) => !pageCards.some((mine) => sameLogin(card, mine)))
+      otherList.append(...(cards.length ? cards.map(cardRow) : [listNote(`No other logins match “${result.q}”.`)]))
+    }
+  }
+}
+
+// Asks once the person stops typing for a moment; VaultKey allows 60 searches a minute.
+let searchTimer = 0
+searchBox.addEventListener('input', () => {
+  clearTimeout(searchTimer)
+  const q = searchBox.value.trim()
+  if (!q) {
+    otherList.replaceChildren()
+    return
+  }
+  searchTimer = window.setTimeout(() => ask({ type: 'search', q }), 250)
+})
 
 function showCards(result: CardsResult): void {
   cardList.replaceChildren()
@@ -249,6 +324,9 @@ function showCards(result: CardsResult): void {
       return
     case 'cards':
       insecurePage = !result.secure
+      pageSite = result.site
+      pageOrigin = result.origin
+      pageCards = result.cards
       site.textContent = result.cards.length
         ? `Logins for ${result.site}`
         : `No logins for ${result.site} in VaultKey.`
@@ -269,6 +347,9 @@ port.onMessage.addListener((message: PopupUpdate) => {
       return
     case 'cards':
       showCards(message.result)
+      return
+    case 'search':
+      showSearch(message.result)
       return
     case 'filled':
       setBusy(false)

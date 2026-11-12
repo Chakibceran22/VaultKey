@@ -22,10 +22,7 @@ const send = (request: MenuRequest): void => port.postMessage(request)
 
 // A click in the menu must not take focus from the page's field.
 document.addEventListener('mousedown', (event) => event.preventDefault(), true)
-// The frame's empty part (the menu is always 8 rows tall): a click there closes it.
-document.addEventListener('click', (event) => {
-  if (!panel.contains(event.target as Node)) send({ type: 'escape' })
-})
+
 
 const observer = new IntersectionObserver(
   (entries) => {
@@ -36,33 +33,39 @@ const observer = new IntersectionObserver(
 )
 observer.observe(panel)
 
-function row(card: MenuCard, index: number): HTMLLIElement {
+/** The rows that can be picked (↑ ↓ move among them); the others are hints. */
+const pickable = (): MenuCard[] => cards.filter((card) => card.fillable)
+
+function row(card: MenuCard): HTMLLIElement {
   const item = document.createElement('li')
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.className = 'row'
-  button.setAttribute('role', 'option')
-  button.setAttribute('aria-selected', String(index === active))
+  // A hint ("Signs in with Google · you@gmail.com"): shown, not a button.
+  const button = document.createElement(card.fillable ? 'button' : 'div')
+  if (button instanceof HTMLButtonElement) {
+    button.type = 'button'
+    button.setAttribute('role', 'option')
+    button.setAttribute('aria-selected', String(pickable()[active] === card))
+    button.addEventListener('click', (event) => pick(card, event.isTrusted))
+  }
+  button.className = card.fillable ? 'row' : 'row hint'
   const tile = document.createElement('span')
   tile.className = 'tile'
-  tile.textContent = (card.where.replace(/^Saved for /, '') || card.name).trim().charAt(0) || '?'
+  tile.textContent = card.tile
   const text = document.createElement('span')
   text.className = 'text'
   const name = document.createElement('span')
   name.className = 'name'
-  name.textContent = code ? `Fill code · ${card.name}` : card.name
+  name.textContent = code && card.fillable ? `Fill code · ${card.name}` : card.name
   const where = document.createElement('span')
   where.className = 'where'
   where.textContent = card.where
   text.append(name, where)
   button.append(tile, text)
-  button.addEventListener('click', (event) => pick(card, event.isTrusted))
   item.append(button)
   return item
 }
 
 function render(): void {
-  list.replaceChildren(...cards.map(row))
+  list.replaceChildren(...cards.map((card) => row(card)))
 }
 
 function message(text: string, bad = false): void {
@@ -81,7 +84,6 @@ port.onMessage.addListener((update: MenuUpdate) => {
     case 'show':
       shownAt = performance.now()
       active = -1
-      document.body.classList.toggle('above', update.above)
       if (update.state === 'locked') {
         cards = []
         message('VaultKey is locked.')
@@ -106,12 +108,15 @@ port.onMessage.addListener((update: MenuUpdate) => {
     case 'key':
       if (update.key === 'Enter') {
         // Forwarded only for a real key press in the field (content script).
-        const card = cards[active]
+        const card = pickable()[active]
         if (card) pick(card, true)
         return
       }
-      if (cards.length === 0) return
-      active = update.key === 'ArrowDown' ? (active + 1) % cards.length : (active - 1 + cards.length) % cards.length
+      {
+        const count = pickable().length
+        if (count === 0) return
+        active = update.key === 'ArrowDown' ? (active + 1) % count : (active - 1 + count) % count
+      }
       render()
       return
     case 'result':

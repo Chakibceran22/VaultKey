@@ -22,7 +22,10 @@
       <section id="logins" class="logins" hidden aria-label="Logins for this site">
         <p id="site" class="site"></p>
         <ul id="cards" class="cards"></ul>
-        <p id="logins-note" class="hint" hidden></p>
+        <label class="search-label" for="search">Other logins</label>
+        <input id="search" class="search" type="search" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Name, website or email" />
+        <ul id="others" class="cards" aria-label="Other logins"></ul>
+        <p id="logins-note" class="hint" role="status" hidden></p>
       </section>
       <section id="pair" class="pair" hidden>
         <p id="pair-text" class="pair-text"></p>

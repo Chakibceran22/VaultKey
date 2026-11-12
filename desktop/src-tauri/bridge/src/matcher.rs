@@ -8,9 +8,10 @@
 //! browser ([`Page::parse`]), never from page content.
 //!
 //! - Same host: `exact`. Same registrable domain (Public Suffix List, private section
-//!   included): `subdomain`. Anything else: nothing, so `g1thub.com`,
-//!   `github.com.evil.io` and `bob.github.io` never get `github.com`'s or `alice.github.io`'s
-//!   login.
+//!   included): `subdomain`. Two registrable domains that share one account in the
+//!   vendored related-domains data (`related.rs`): `related`. Anything else: nothing, so
+//!   `g1thub.com`, `github.com.evil.io` and `bob.github.io` never get `github.com`'s or
+//!   `alice.github.io`'s login.
 //! - Addresses (IPs, `localhost`, a single-label name with a port or a scheme) match the
 //!   same host only.
 //! - A name with no address (`GitHub`) is never matched automatically.
@@ -45,14 +46,21 @@ pub struct Page {
     /// The port when it isn't the scheme's default.
     pub port: Option<u16>,
     pub registrable: Option<String>,
+    /// The page's site is in the related-domains data: worked out once, so the many
+    /// pages that aren't cost nothing more per saved website.
+    related: bool,
 }
 
-/// How certain a match is (plans/04, "Match tiers"). M2 has the two that fill on a click.
+/// How certain a match is (plans/04, "Match tiers"), most certain first. The first three
+/// fill on a click; `search` is never a match: it marks a popup search result, which fills
+/// only once the user confirms it for this site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
     Exact,
     Subdomain,
+    Related,
+    Search,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,14 +74,26 @@ pub enum Verdict {
 /// The longest text read as a website (`validate_domain_name` caps saved ones at 253).
 const MAX_INPUT: usize = 2048;
 
-/// Host as compared: lowercase (the URL parser did it, and IDNA), no trailing dot, no
-/// leading `www.`. IPv6 in brackets.
+/// Host as compared: lowercase (the URL parser did it, and IDNA), without the root's
+/// trailing dot, no leading `www.` (all of them: `www.www.x.com` is `x.com`, so normalising
+/// twice changes nothing). IPv6 in brackets. A name with an empty label (`github.com..`,
+/// `a..b`) is no host: no browser reaches it, and trimming it could turn it into another
+/// (`192.168.1.10..` would read as that IP address).
+///
+/// `www.` stays when what's left is a public suffix: `www.github.io` is someone's site under
+/// `github.io` (private section) and `www.com` a site under `com`; stripped, either would
+/// be the bare suffix and match a login saved for it.
 fn normal_host(host: Host<&str>) -> Option<(String, bool)> {
     match host {
         Host::Domain(domain) => {
-            let domain = domain.trim_end_matches('.');
-            let domain = domain.strip_prefix("www.").unwrap_or(domain);
-            (!domain.is_empty() && !domain.contains('*')).then(|| (domain.to_owned(), false))
+            let mut domain = domain.strip_suffix('.').unwrap_or(domain);
+            while let Some(rest) = domain.strip_prefix("www.")
+                && psl::suffix_str(rest) != Some(rest)
+            {
+                domain = rest;
+            }
+            let labels_ok = !domain.is_empty() && domain.split('.').all(|label| !label.is_empty());
+            (labels_ok && !domain.contains('*')).then(|| (domain.to_owned(), false))
         }
         Host::Ipv4(ip) => Some((ip.to_string(), true)),
         Host::Ipv6(ip) => Some((format!("[{ip}]"), true)),
@@ -123,6 +143,25 @@ impl Saved {
         Saved::Domain { host, registrable, port, scheme }
     }
 
+    /// The scheme it was saved with, if one was typed.
+    pub fn scheme(&self) -> Option<Scheme> {
+        match self {
+            Saved::Domain { scheme, .. } | Saved::Address { scheme, .. } => *scheme,
+            Saved::NameOnly => None,
+        }
+    }
+
+    /// The normal form as text (`https://accounts.google.com`, `192.168.1.10:8000`), or
+    /// `None` for a name only. Parsing it gives this `Saved` back.
+    pub fn canonical(&self) -> Option<String> {
+        let label = self.label()?;
+        Some(match self.scheme() {
+            Some(Scheme::Http) => format!("http://{label}"),
+            Some(Scheme::Https) => format!("https://{label}"),
+            None => label,
+        })
+    }
+
     /// The host (and port) to show: "accounts.google.com", "192.168.1.10:8000".
     pub fn label(&self) -> Option<String> {
         let (host, port) = match self {
@@ -147,7 +186,8 @@ impl Page {
         let scheme = scheme_of(&url)?;
         let (host, ip) = url.host().and_then(normal_host)?;
         let registrable = if ip || !host.contains('.') { None } else { registrable(&host) };
-        Some(Page { scheme, host, port: url.port(), registrable })
+        let related = registrable.as_deref().is_some_and(|registrable| crate::related::listed(&host, registrable));
+        Some(Page { scheme, host, port: url.port(), registrable, related })
     }
 
     fn effective_port(&self) -> u16 {
@@ -187,6 +227,14 @@ pub fn compare(saved: &Saved, page: &Page) -> Verdict {
             return Verdict::None;
         }
         Tier::Subdomain
+    } else if page.related
+        && let (Some(saved_registrable), Some(page_registrable)) = (saved_registrable, page.registrable.as_deref())
+        && crate::related::related(host, saved_registrable, &page.host, page_registrable)
+    {
+        if port.is_some_and(|port| port != page.effective_port()) {
+            return Verdict::None;
+        }
+        Tier::Related
     } else {
         return Verdict::None;
     };
@@ -205,6 +253,8 @@ mod tests {
         match compare(&Saved::parse(saved), &page) {
             Verdict::Fill(Tier::Exact) => "exact",
             Verdict::Fill(Tier::Subdomain) => "subdomain",
+            Verdict::Fill(Tier::Related) => "related",
+            Verdict::Fill(Tier::Search) => "search",
             Verdict::Insecure => "insecure",
             Verdict::None => "none",
         }
@@ -253,6 +303,20 @@ mod tests {
         ("alice.github.io", "https://docs.alice.github.io/", "subdomain"),
         ("github.io", "https://alice.github.io/", "none"),
         ("vercel.app", "https://vercel.app/", "exact"),
+        // `www.` in front of a public suffix is a site of its own, not the suffix
+        ("vercel.app", "https://www.vercel.app/", "none"),
+        ("github.io", "https://www.github.io/", "none"),
+        ("www.github.io", "https://github.io/", "none"),
+        ("www.github.io", "https://www.github.io/login", "exact"),
+        ("www.github.io", "https://alice.github.io/", "none"),
+        ("duckdns.org", "https://www.duckdns.org/", "none"),
+        ("www.duckdns.org", "https://www.duckdns.org/", "exact"),
+        ("www.duckdns.org", "https://evil.duckdns.org/", "none"),
+        ("co.uk", "https://www.co.uk/", "none"),
+        ("www.co.uk", "https://www.co.uk/", "exact"),
+        ("www.com", "https://www.com/", "exact"),
+        ("www.www.github.io", "https://www.github.io/", "exact"),
+        ("www.bbc.co.uk", "https://bbc.co.uk/", "exact"),
         ("co.uk", "https://bbc.co.uk/", "none"),
         // ICANN multi-label suffixes
         ("bbc.co.uk", "https://www.bbc.co.uk/", "exact"),
@@ -269,6 +333,11 @@ mod tests {
         ("github.com", "https://WWW.GITHUB.COM/", "exact"),
         ("github.com.", "https://github.com/", "exact"),
         ("github.com", "https://github.com./", "exact"),
+        ("github.com..", "https://github.com/", "none"),
+        ("github.com", "https://github.com../", "no page"),
+        ("github.com", "https://gist..github.com/", "no page"),
+        ("192.168.1.10", "http://192.168.1.10../", "no page"),
+        ("192.168.1.10", "http://192.168.1.10./", "exact"),
         ("www.github.com", "https://www.github.com/", "exact"),
         ("  github.com  ", "https://github.com/", "exact"),
         ("www.github.com", "https://gist.github.com/", "subdomain"),
@@ -387,7 +456,29 @@ mod tests {
         ("proton.me", "https://account.proton.me/login", "subdomain"),
         ("BattleNet.com", "https://battlenet.com/", "exact"),
         ("steampowered.com", "https://store.steampowered.com/login/", "subdomain"),
-        ("steampowered.com", "https://steamcommunity.com/login", "none"),
+        // related domains (the vendored shared-credentials data): fills on a click, and
+        // never for a lookalike of a related site
+        ("steampowered.com", "https://steamcommunity.com/login", "related"),
+        ("steamcommunity.com", "https://store.steampowered.com/login/", "related"),
+        ("store.steampowered.com", "https://steamcommunity.com/", "related"),
+        ("twitter.com", "https://x.com/i/flow/login", "related"),
+        ("x.com", "https://twitter.com/login", "none"),
+        ("discordapp.com", "https://discord.com/login", "related"),
+        ("discord.com", "https://discordapp.com/login", "none"),
+        ("trello.com", "https://id.atlassian.com/login", "related"),
+        ("trello.com", "https://admin.atlassian.com/", "none"),
+        ("airbnb.fr", "https://www.airbnb.co.uk/login", "related"),
+        ("ebay.com", "https://signin.ebay.de/", "related"),
+        ("https://steampowered.com", "http://steamcommunity.com/", "insecure"),
+        ("steampowered.com:8443", "https://steamcommunity.com/", "none"),
+        ("steampowered.com:8443", "https://steamcommunity.com:8443/", "related"),
+        ("steampowered.com", "https://steamcommunity.com.evil.io/", "none"),
+        ("steampowered.com", "https://steamcommunlty.com/", "none"),
+        ("steampowered.com", "https://steamcommunity.co/", "none"),
+        ("twitter.com", "https://x.com.evil.io/", "none"),
+        ("twitter.com", "https://xx.com/", "none"),
+        ("Steam", "https://steamcommunity.com/", "none"),
+        ("192.168.1.10", "https://steamcommunity.com/", "none"),
     ];
 
     #[test]
@@ -407,18 +498,78 @@ mod tests {
     fn normalising_twice_changes_nothing() {
         for &(saved, _, _) in TABLE {
             let once = Saved::parse(saved);
-            if let Some(label) = once.label() {
-                let scheme = match &once {
-                    Saved::Domain { scheme, .. } | Saved::Address { scheme, .. } => *scheme,
-                    Saved::NameOnly => None,
-                };
-                let again = match scheme {
-                    Some(Scheme::Http) => format!("http://{label}"),
-                    Some(Scheme::Https) => format!("https://{label}"),
-                    None => label.clone(),
-                };
-                assert_eq!(Saved::parse(&again), once, "{saved:?} → {label:?}");
+            if let Some(text) = once.canonical() {
+                assert_eq!(Saved::parse(&text), once, "{saved:?} → {text:?}");
             }
+        }
+        assert_eq!(Saved::parse("www.www.github.com").canonical().as_deref(), Some("github.com"));
+        assert_eq!(Saved::parse("www.www.github.io").canonical().as_deref(), Some("www.github.io"));
+        assert_eq!(Page::parse("https://www.github.io/").map(|page| page.host).as_deref(), Some("www.github.io"));
+    }
+
+    /// xorshift64: "random" input that is the same on every run, with no dependency.
+    struct XorShift(u64);
+
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Pieces of URLs, glued at random: schemes, hosts, suffixes, ports, IPs, user info,
+    /// escapes, IDN and junk.
+    const PIECES: &[&str] = &[
+        "http://", "https://", "ftp://", "://", "www.", "WWW.", ".", "..", "-", "github", "com", "co.uk", "github.io",
+        "vercel.app", "localhost", "nas", "xn--", "xn--bcher-kva", "bücher", "例え", "а", ":", ":8080", ":443", ":80",
+        ":0", ":99999", "[", "]", "::1", "[::1]", "[2001:db8::1]", "192.168.1.10", "0x7f.1", "1.2.3", "@", "user:pass@",
+        "/", "/login", "?", "?continue=https://x.com/", "#", "%", "%41", "%2e", " ", "\t", "\u{0}", "*", "\\",
+        "steampowered.com", "steamcommunity.com", "x.com", "id.atlassian.com", "a", "1", "-.", "\u{202E}", "ü", "ß",
+        "accounts.google.com/o/oauth2/v2/auth?redirect_uri=", "storagerelay://https/", "duckdns.org", "&followup=",
+    ];
+
+    fn random_text(rng: &mut XorShift) -> String {
+        let pieces = 1 + rng.below(8);
+        (0..pieces).map(|_| PIECES[rng.below(PIECES.len())]).collect()
+    }
+
+    /// The fuzz target's checks (`fuzz/`), on fixed random input in the normal suite: no
+    /// panics, normalising twice changes nothing, and a fill never crosses registrable
+    /// domains except through the related-domains data.
+    #[test]
+    fn random_input_never_panics_and_normalises_once() {
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+        for _ in 0..20_000 {
+            let (saved_text, page_text) = (random_text(&mut rng), random_text(&mut rng));
+            let saved = Saved::parse(&saved_text);
+            if let Some(text) = saved.canonical() {
+                assert_eq!(Saved::parse(&text), saved, "{saved_text:?} → {text:?}");
+            }
+            for text in [&page_text, &saved_text] {
+                let Some(page) = Page::parse(text) else { continue };
+                let scheme = if page.scheme == Scheme::Https { "https" } else { "http" };
+                let again = format!("{scheme}://{}/", page.label());
+                assert_eq!(Page::parse(&again).as_ref(), Some(&page), "{text:?} → {again:?}");
+                if let Verdict::Fill(tier) = compare(&saved, &page) {
+                    let (host, registrable) = match &saved {
+                        Saved::Domain { host, registrable, .. } => (host, registrable.as_deref()),
+                        Saved::Address { host, .. } => (host, None),
+                        Saved::NameOnly => panic!("a name only matched {text:?}"),
+                    };
+                    let same_site = *host == page.host || (registrable.is_some() && registrable == page.registrable.as_deref());
+                    assert!(same_site || tier == Tier::Related, "{saved_text:?} on {text:?}: {tier:?}");
+                    assert_ne!(tier, Tier::Search);
+                }
+            }
+            let _ = crate::provider::relying_party(&page_text);
         }
     }
 

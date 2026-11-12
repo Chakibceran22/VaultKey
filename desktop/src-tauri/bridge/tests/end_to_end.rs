@@ -66,20 +66,24 @@ impl server::App for Vault {
 
     fn accounts(&self) -> Result<Arc<[api::Entry]>, server::Refusal> {
         Ok(Arc::from(vec![api::Entry::new(api::Account {
+            kind: api::LoginKind::Account,
             id: 1,
+            title: "github.com".into(),
             website: "github.com".into(),
             email: "me@x.com".into(),
             username: None,
             has_password: true,
             has_totp: false,
+            signs_in_with: Vec::new(),
         })]))
     }
 
-    fn login(&self, account: i64) -> Result<Option<api::Login>, server::Refusal> {
-        Ok((account == 1).then(|| api::Login { email: "me@x.com".into(), username: None, password: "hunter2".to_owned().into() }))
+    fn login(&self, kind: api::LoginKind, id: i64) -> Result<Option<api::Login>, server::Refusal> {
+        Ok((kind == api::LoginKind::Account && id == 1)
+            .then(|| api::Login { email: "me@x.com".into(), username: None, password: "hunter2".to_owned().into() }))
     }
 
-    fn code(&self, _: i64) -> Result<Option<api::AuthCode>, server::Refusal> {
+    fn code(&self, _: api::LoginKind, _: i64) -> Result<Option<api::AuthCode>, server::Refusal> {
         Ok(None)
     }
 
@@ -362,6 +366,18 @@ fn pairs_and_talks_encrypted_through_the_real_bridge() {
         let elsewhere = "https://github.com.evil.io/";
         let refused = call(format!(r#"{{"id":6,"m":"reveal","p":{{"h":"{h}","tabUrl":"{elsewhere}","frameUrl":"{elsewhere}","via":"popup"}}}}"#)).await;
         assert_eq!(refused["e"]["code"], "ORIGIN_MISMATCH");
+        // A popup search result fills on another site only once the user confirmed it.
+        let found = call(r#"{"id":7,"m":"search","p":{"q":"github","tabUrl":"https://gitlab.com/","limit":5}}"#.into()).await;
+        assert_eq!(found["r"]["cards"][0]["tier"], "search");
+        let h = found["r"]["cards"][0]["h"].as_str().unwrap().to_owned();
+        let other = "https://gitlab.com/users/sign_in";
+        let unconfirmed = call(format!(r#"{{"id":8,"m":"reveal","p":{{"h":"{h}","tabUrl":"{other}","frameUrl":"{other}","via":"popup"}}}}"#)).await;
+        assert_eq!(unconfirmed["e"]["code"], "CONFIRM_REQUIRED");
+        let confirmed = call(format!(
+            r#"{{"id":9,"m":"reveal","p":{{"h":"{h}","tabUrl":"{other}","frameUrl":"{other}","via":"popup","confirmedCrossSite":true}}}}"#
+        ))
+        .await;
+        assert_eq!(confirmed["r"]["password"], "hunter2");
         app.quit();
     });
 }

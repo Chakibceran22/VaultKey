@@ -21,7 +21,7 @@ use tokio::{
 
 use crate::{
     address::Address,
-    api::{self, AuthCode, Entry, Fill, Grants, Limiter, Login},
+    api::{self, AuthCode, Entry, Fill, Grants, Limiter, Login, LoginKind},
     frame::{self, ByteOrder},
     inner,
     message::{self, Browser, ErrorCode, Message, PROTOCOL, VaultState},
@@ -87,12 +87,14 @@ pub trait App: Send + Sync + 'static {
     fn ask_to_pair(&self, request: PairingRequest) -> Result<oneshot::Receiver<bool>, Refusal>;
     /// A paired browser completed a handshake ("last used").
     fn seen(&self, client: &ClientId);
-    /// Every account, without secrets, websites normalised (the app caches this).
+    /// Every account and service login (with a usable address), without secrets, websites
+    /// normalised (the app caches this).
     fn accounts(&self) -> Result<Arc<[Entry]>, Refusal>;
-    /// One account's login, decrypted for one fill.
-    fn login(&self, account: i64) -> Result<Option<Login>, Refusal>;
-    /// One account's current authenticator code, if it has a setup key.
-    fn code(&self, account: i64) -> Result<Option<AuthCode>, Refusal>;
+    /// One login, decrypted for one fill: an account (`credentials.id`) or a service's own
+    /// login (`service_logins.id`).
+    fn login(&self, kind: LoginKind, id: i64) -> Result<Option<Login>, Refusal>;
+    /// One login's current authenticator code, if it has a setup key (accounts only).
+    fn code(&self, kind: LoginKind, id: i64) -> Result<Option<AuthCode>, Refusal>;
     /// A fill happened: for "Recent fills" in Settings (memory only).
     fn filled(&self, fill: Fill);
     /// Brings VaultKey's window forward (to unlock it there).
@@ -712,11 +714,11 @@ mod tests {
             Ok(Arc::from(Vec::new()))
         }
 
-        fn login(&self, _: i64) -> Result<Option<Login>, Refusal> {
+        fn login(&self, _: LoginKind, _: i64) -> Result<Option<Login>, Refusal> {
             Ok(None)
         }
 
-        fn code(&self, _: i64) -> Result<Option<AuthCode>, Refusal> {
+        fn code(&self, _: LoginKind, _: i64) -> Result<Option<AuthCode>, Refusal> {
             Ok(None)
         }
 

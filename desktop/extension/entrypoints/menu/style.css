@@ -37,26 +37,20 @@ body {
   background: transparent;
 }
 
-/* The frame is always 8 rows tall; the panel takes what it needs, at the top (or at the
-   bottom when the menu opens above the field). */
+/* The frame is exactly the panel's size (content script): the panel fills it. */
 body {
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  padding: 0 1px;
-}
-
-body.above {
-  justify-content: flex-end;
 }
 
 .panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--background);
-  box-shadow: 0 8px 24px rgb(15 18 40 / 0.2);
   color: var(--foreground);
   font:
     13px/1.35 -apple-system,
@@ -69,6 +63,8 @@ body.above {
 }
 
 .list {
+  flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 4px;
   list-style: none;
@@ -92,8 +88,13 @@ body.above {
 }
 
 .row[aria-selected='true'],
-.row:hover {
+button.row:hover {
   background: var(--hover);
+}
+
+/* An account that signs in with another: information, not something to pick. */
+.row.hint {
+  cursor: default;
 }
 
 .tile {

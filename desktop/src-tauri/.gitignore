@@ -8,3 +8,7 @@
 
 # Search models: fetched by scripts/fetch-models.sh, pinned by hash, never committed.
 /models/
+
+# The browser bridge, built and copied here by scripts/bundle-bridge.mjs for Tauri's
+# bundle.externalBin (vaultkey-bridge-<target triple>): a build output, never committed.
+/binaries/

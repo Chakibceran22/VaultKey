@@ -89,5 +89,10 @@ export const api: VaultApi = {
   setBridgeEnabled: (enabled) => call('set_bridge_enabled', { enabled }),
   revokeBrowser: (browserId) => call('revoke_browser', { browserId }),
   pendingPairing: () => call('pending_pairing'),
-  answerPairing: (id, approve) => call('answer_pairing', { id, approve })
+  answerPairing: (id, approve) => call('answer_pairing', { id, approve }),
+  unmatchedWebsites: () => call('unmatched_websites'),
+  setWebsiteAddress: (domainId, address) => call('set_website_address', { domainId, address }),
+  backgroundSettings: () => call('background_settings'),
+  setBackgroundSettings: ({ keepRunning, autoLockMinutes }) =>
+    call('set_background_settings', { keepRunning, autoLockMinutes })
 }

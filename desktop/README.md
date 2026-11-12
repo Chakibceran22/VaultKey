@@ -17,6 +17,8 @@ Rust core with a React interface).
 [Using VaultKey](#using-vaultkey) ·
 [Your master password and recovery code](#your-master-password-and-recovery-code) ·
 [What it holds](#what-it-holds) ·
+[The browser extension](#the-browser-extension) ·
+[Settings](#settings) ·
 [Security](#security) ·
 [Where your data is](#where-your-data-is) ·
 [Build and run it](#build-and-run-it) ·
@@ -44,8 +46,15 @@ Rust core with a React interface).
 
 ### Every day
 
-- **Unlock** with your master password. **Lock** with ⌘L (Ctrl+L), or by closing the
-  window. Reloading the page also locks it.
+- **Unlock** with your master password. **Lock** with ⌘L (Ctrl+L). Reloading the page
+  also locks it.
+- It **locks itself** after 5 minutes without use (you choose how long in
+  [Settings](#settings)), and on a Mac also when it goes to sleep or the screen locks. A
+  message says why when you come back.
+- **Closing the window** hides VaultKey on macOS and Windows: it keeps running in the menu
+  bar (the system tray on Windows), so the [browser extension](#the-browser-extension)
+  keeps working until it locks. Its icon there has **Open VaultKey**, **Lock** and
+  **Quit**. On Linux, or with that setting off, closing the window locks the vault.
 - While the vault is locked, nothing in it can be read: the key that opens it exists
   only in memory while it's unlocked, and is wiped when it locks.
 
@@ -158,12 +167,114 @@ listed with the reason. Everything is saved together, or nothing is.
 | / | Filter the current list |
 | ⌘N | New account, project or device on its list; a new service on a project page |
 | ⌘L | Lock the vault |
+| ⌘, | Settings |
 | ⌘M | Full screen on / off (macOS) |
 | ⌘[ ⌘] or ⌘← ⌘→ | Back / forward (macOS) |
 | Alt+← Alt+→ | Back / forward (Windows, Linux) |
 
 On Windows and Linux, use Ctrl where macOS uses ⌘. A two-finger swipe left or right on
 a trackpad, and a mouse's back and forward buttons, also go back and forward.
+
+## The browser extension
+
+The VaultKey extension fills your logins on websites, from the vault open in VaultKey.
+Click into a login field, pick the account, and it's filled. It works in **Brave**
+first, and in Chrome, Edge and Chromium with the same build. It isn't in a store yet:
+you load it yourself, in developer mode.
+
+The extension keeps nothing: it asks VaultKey for what one page needs, over an encrypted
+channel, and only a browser you paired can ask. It can read logins (website, email or
+username, password, authenticator code), never notes, secrets, files or recovery codes.
+It can't change anything in the vault, and it can't unlock it. Nothing is filled without
+a click or a key press.
+
+### Install and pair it
+
+1. **Build the extension** that goes with your VaultKey (each only talks to its own),
+   after `pnpm install` in `desktop/`:
+
+   ```bash
+   cd desktop/extension
+   pnpm build          # for an installed VaultKey → .output/chrome-mv3
+   pnpm build:dev      # for `pnpm tauri dev`      → .output/chrome-mv3-dev
+   ```
+
+2. **Turn it on in VaultKey:** unlock, open **Settings** (the gear in the top bar, or
+   ⌘,), **Browser extension** → **Turn on**. Your browsers are listed as **Ready**.
+3. **Load it in Brave:** open `brave://extensions` (Chrome: `chrome://extensions`, Edge:
+   `edge://extensions`), turn on **Developer mode**, click **Load unpacked**, and choose
+   the `.output/chrome-mv3` folder (or `chrome-mv3-dev`). Pin its toolbar button.
+4. **Pair it:** click the VaultKey toolbar button, then **Connect to VaultKey**. VaultKey
+   shows a 6-digit code: if it's the same as the extension's, click **Connect browser**.
+   The extension shows **Connected**.
+
+Pairing is once per browser. After you rebuild the extension, reload it from the
+extensions page, then reload the pages you had open.
+
+### Fill a login
+
+- **In the page:** click into a login field. A VaultKey key icon sits in the field, and
+  a menu under it lists your logins for this site. Click one, or use ↑ ↓ and Enter. The
+  menu opens by itself only when you have logins saved for exactly this site; otherwise
+  click the key icon.
+- **From the toolbar:** the VaultKey button lists the logins for this page, with
+  **Fill**, and **Copy code** for an authenticator code.
+- **With the keyboard:** ⌘⇧L (Ctrl+Shift+L) fills when the page has exactly one login
+  saved for this exact site, over https.
+
+VaultKey decides what matches, and a lookalike site gets nothing. Logins saved for a
+subdomain or a related site (one Apple's shared-login list ties to it) are listed after
+the site's own. On a "Continue with Google" page, the Google account your login for that
+site signs in with comes first. On an `http://` page, nothing fills until you click
+**Fill anyway**.
+
+**Search:** the toolbar button can search all your logins, by website, email or username.
+Filling one on a site it isn't saved for asks you to confirm first, and the fill is marked
+**Other site** in Settings → Browser extension → Recent fills.
+
+## Settings
+
+**Settings** is the gear in the top bar (⌘,).
+
+**Browser extension:**
+
+- **Turn on / Turn off.** On, VaultKey registers its bridge with your browsers and
+  listens for them. Off, no browser can reach it.
+- **Browsers:** the ones found on this computer, and whether VaultKey is registered with
+  each.
+- **Paired browsers:** when each was paired and last used. **Disconnect** makes that
+  browser pair again before it can ask for anything.
+- **Websites the extension can't match:** websites saved as a name ("GitHub") rather than
+  an address, so the extension can't tell which pages they're for. **Use github.com**
+  renames one in a click when VaultKey can tell what it is; otherwise type its address
+  (`github.com`, or an IP address for a router). Its accounts stay with it. Shown only
+  when there are some.
+- **Recent fills:** every login and code filled since the vault was unlocked, so you can
+  spot one you didn't make. Kept in memory only, and cleared when the vault locks.
+
+**Background & auto-lock:**
+
+- **Keep VaultKey running when the window is closed** (on by default; macOS and Windows).
+  Closing the window hides it, and the extension keeps filling until the vault locks.
+  Off: closing the window locks the vault. On Linux, closing always locks, because
+  VaultKey has no tray icon there yet.
+- **Lock after** 1 to 60 minutes without use (5 by default). Use is an unlock, activity
+  in VaultKey's window, or a fill from the extension.
+- On macOS it also locks at once on sleep and screen lock. On Windows and Linux it
+  doesn't notice those yet: time asleep counts as time without use, so after a longer
+  sleep it locks within 30 seconds of waking.
+
+### If the extension doesn't work
+
+| What you see | What to do |
+|---|---|
+| **Bridge not found** in the extension | VaultKey isn't installed, or the extension isn't on: Settings → Browser extension → **Turn on**, and check your browser shows **Ready**. A browser installed later: turn it off and on again. With `pnpm tauri dev`, use the dev extension (`pnpm build:dev`): the dev and installed versions never talk to each other. |
+| **VaultKey isn't open** | Start VaultKey. With the window closed it's still running, in the menu bar or tray. |
+| **Locked**, with **Open VaultKey** | Click **Open VaultKey**: VaultKey's window comes forward to unlock. It needs VaultKey running: after **Quit**, start it yourself (the extension can't start it yet). |
+| No key icon on a login page | Reload the page: the extension only reaches pages loaded after it was installed or reloaded. |
+| A white box around the menu in the page | An older build of the extension: build it again, reload it from the extensions page, then reload the page. |
+| An account never shows | Its website may be saved as a name: see **Websites the extension can't match** in Settings. |
+| Linux | Use the `.deb` or `.rpm`: an AppImage runs from a new place each time, so browsers can't find its bridge (not supported yet). Snap and Flatpak browsers may not be allowed to start it. |
 
 ## Security
 
@@ -215,7 +326,8 @@ file can read it. The secrets themselves need your master password or recovery c
 - **One app at a time** can open the vault: a second copy shows "already open in
   another window".
 - **No network.** The page's content security policy only lets it talk to the app's
-  own Rust core.
+  own Rust core. The browser extension reaches VaultKey through a local socket (a named
+  pipe on Windows) that only your user can open, never over the network.
 - Copied secrets are marked as concealed, which keeps them out of clipboard history.
 
 ## Where your data is
@@ -288,6 +400,9 @@ pnpm install            # the first time only
 pnpm tauri dev          # the app, with hot reload
 ```
 
+`pnpm tauri dev` first builds the browser extension's bridge (`pnpm bridge:dev`), which
+the app expects beside itself: the first time takes a little longer.
+
 `pnpm tauri dev` **never touches your real vault**: development uses a vault of its own,
 in a `vaultkey-dev` folder next to the real one (the path is printed when it starts).
 To start from an empty vault in a folder of your choosing:
@@ -319,7 +434,8 @@ cd desktop
 pnpm tauri build
 ```
 
-It builds an optimised app and its installers in `src-tauri/target/release/bundle/`:
+It builds an optimised app and its installers in `src-tauri/target/release/bundle/`,
+with the browser extension's bridge inside (`pnpm bridge:release` builds it first):
 
 | OS | Files | Install |
 |---|---|---|
@@ -404,14 +520,27 @@ The schema so far: v1 accounts (the Electron app), v2 projects, services, secret
 account links, v3 devices, sign-in steps, account secrets and notes, v4 account groups,
 v5 several accounts per service with roles, descriptions and device-link notes, v6
 services' own logins, v7 the vault key's slots, v8 the browser extension's key and
-paired browsers.
+paired browsers, v9 app settings (background mode and auto-lock; nothing secret).
 
 ### Tests
 
 ```bash
+pnpm bridge:dev         # once in a fresh checkout: the app only builds with the bridge
 cd src-tauri
 cargo test -j 2
+
+cd ../extension
+pnpm test && pnpm typecheck   # the browser extension
 ```
+
+Tauri checks for the bridge in `src-tauri/binaries/` on every build of the app, tests
+included, and stops with "resource path … doesn't exist" when it's missing:
+`pnpm bridge:dev` builds it and puts it there (`pnpm tauri dev` and `pnpm vault:rehearse`
+do it themselves). After changing the bridge's code, run it again.
+
+CI (`.github/workflows/ci.yml`) runs the bridge's tests and clippy, the extension's tests
+and typecheck and the desktop typecheck on macOS, Windows and Linux, and the app's tests
+on macOS.
 
 Among them:
 
@@ -454,7 +583,13 @@ Rust core (src-tauri/src/)
   db.rs               SQLite: WAL, FULL sync + fullfsync, migrations, verified backups
   validation.rs       input rules
   paths.rs            where the vault lives on each OS
+  background.rs       background mode: hide on close, the tray icon, the settings
+  idle.rs             auto-lock: the idle timer, sleep and screen lock
+  bridge/             the browser extension's server: pairing, sessions, Settings
+src-tauri/bridge/     vaultkey-bridge, the extension's native-messaging host, and the
+                      matching, protocol and encryption the app shares with it
 src-tauri/search/     the search engine in Rust, for a future shared core (not linked into the app)
+extension/            the browser extension (WXT, TypeScript); see extension/README.md
 ```
 
 ### Interface

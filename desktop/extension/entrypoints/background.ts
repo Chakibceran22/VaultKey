@@ -88,6 +88,11 @@ export default defineBackground(() => {
       case 'vk.token':
         sendResponse(inline.token(frame))
         return
+      case 'vk.sso':
+        void warm()
+          .then(() => inline.sso(frame))
+          .then(sendResponse)
+        return true
       case 'vk.open':
         void inline.open(frame, message.kind, message.above).then(sendResponse)
         return true
@@ -153,11 +158,19 @@ export default defineBackground(() => {
         case 'cards':
           void actions.cards().then((result) => send({ type: 'cards', result }))
           return
+        case 'search':
+          // Here only: content scripts and the inline menu have no way to ask for a search.
+          void actions.search(message.q).then((result) => send({ type: 'search', result }))
+          return
         case 'fill':
-          void actions.fill(message.h, 'popup', message.confirmedInsecure).then((outcome) => send({ type: 'filled', outcome }))
+          void actions
+            .fill(message.h, 'popup', { insecure: message.confirmedInsecure, crossSite: message.confirmedCrossSite, origin: message.origin })
+            .then((outcome) => send({ type: 'filled', outcome }))
           return
         case 'code':
-          void actions.code(message.h).then((result) => send({ type: 'code', result }))
+          void actions
+            .code(message.h, { crossSite: message.confirmedCrossSite, origin: message.origin })
+            .then((result) => send({ type: 'code', result }))
       }
     })
     send({ type: 'state', state: link.current() })

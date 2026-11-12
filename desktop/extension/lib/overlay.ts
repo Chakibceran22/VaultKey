@@ -1,6 +1,6 @@
 // What the content script draws on a page (M3; plans/05 "Key icon", plans/02
-// "Clickjacking defences"): the key icon inside a login field, and the host of the menu
-// iframe under it.
+// "Clickjacking defences"): the key icon inside a login field, the host of the menu
+// iframe under it, and (M4) a badge by a "Continue with Google" button you use on this site.
 //
 // Each sits in its own plain <div> on <html> (not <body>, which single-page apps replace;
 // not a custom element, which the page could define), with a closed shadow root, shown in
@@ -13,17 +13,30 @@ const ICON = 20
 const GAP = 4
 const ROW = 44
 const FOOTER = 33
-/** The menu is always this tall (8 rows), whatever it shows: the page can't count the
- * accounts. The menu page draws its panel at the top (or the bottom, when it opens above
- * the field) and leaves the rest transparent; a click there closes it. */
-export const MENU_HEIGHT = 8 * ROW + 8 + FOOTER
+/** The panel's 1 px border, top and bottom. */
+const BORDERS = 2
+/** The menu's host is always this tall (8 rows), whatever it shows: the page can't count
+ * the accounts. Inside the closed shadow root, the iframe is exactly the panel's height, at
+ * the host's top (or its bottom, when the menu opens above the field). The rest of the host
+ * is transparent (a plain element: nothing paints behind it); a click there closes it. */
+export const MENU_HEIGHT = 8 * ROW + 8 + FOOTER + BORDERS
+
+/** The badge's host is this wide whatever it says, so the page can't measure the text. */
+const BADGE_WIDTH = 300
+/** The badge, in its closed shadow root. Its text is generated content (`--t`): it isn't in
+ * the page's DOM, so the page can't find or select it. Nothing in it takes a click or a hit
+ * test (the first rule: `!important` beats the pill's `all:initial`, which would set
+ * `pointer-events` back to `auto`): clicks reach the button under it, and the page can't
+ * map the pill's width with elementFromPoint. */
+export const BADGE_STYLE =
+  '*{pointer-events:none!important}b{all:initial;display:flex;gap:4px;width:max-content;max-width:100%;margin-left:auto;padding:2px 8px 2px 2px;border-radius:9px;background:#4f5bd5;color:#fff;font:11px/14px system-ui;white-space:nowrap;overflow:hidden}b::after{content:var(--t)}svg{width:14px;height:14px}'
 
 /** VaultKey's dial (extension/assets/icon-small.svg), at icon size. */
 const MARK = `<svg viewBox="0 0 64 64" width="${ICON}" height="${ICON}" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#4f5bd5"/><circle cx="32" cy="33" r="23" fill="none" stroke="#fff" stroke-width="6.5"/><path d="M32 3.2l4.6 6.2h-9.2z" fill="#fff"/><path fill="#fff" fill-rule="evenodd" d="M32 21a12 12 0 1 1 0 24a12 12 0 1 1 0-24ZM29.9 35.6A4.2 4.2 0 1 1 34.1 35.6L35.1 41C35.2 41.9 34.7 42.5 33.9 42.5H30.1C29.3 42.5 28.8 41.9 28.9 41Z"/></svg>`
 
-/** The menu's own height for `rows` rows (a locked or empty menu: one message row). */
+/** The menu panel's height for `rows` rows (a locked menu: two, its message and button). */
 export function frameHeight(rows: number): number {
-  return Math.min(Math.max(rows, 1), 8) * ROW + 8 + FOOTER
+  return Math.min(Math.max(rows, 1), 8) * ROW + 8 + FOOTER + BORDERS
 }
 
 const RESET = {
@@ -77,6 +90,9 @@ export class Overlay {
   private frameRows = 1
   private frameRequested = false
   private pending = 0
+  private badges: { host: Host; target: Element; text: string }[] = []
+  /** The page tampered with our elements: no more badges on it. */
+  private noBadges = false
   /** Where the menu was last put, and when. */
   private placed = { left: 0, top: 0, width: 0, at: 0 }
   private readonly watcher: ResizeObserver
@@ -86,11 +102,13 @@ export class Overlay {
     private readonly onIcon: () => void,
     /** The page tampered with our elements and the menu is gone. */
     private readonly onDropped: () => void = () => {},
+    /** A click in the menu's empty part (below or above the panel). */
+    private readonly onOutside: () => void = () => {},
   ) {
     this.watcher = new ResizeObserver(() => this.schedule())
     // Ours to change: a change from anywhere else (the page) closes the menu.
     this.guard = new MutationObserver((changes) => {
-      for (const host of [this.icon, this.menu]) {
+      for (const host of [this.icon, this.menu, ...this.badges.map((badge) => badge.host)]) {
         if (!host) continue
         const restyled = changes.some(
           (change) => change.target === host.element && change.attributeName === 'style' && !same(declarations(host.element), host.style),
@@ -153,8 +171,30 @@ export class Overlay {
     this.hideMenu()
     this.icon?.element.remove()
     this.icon = null
+    this.noBadges = true
+    this.showBadges([])
     this.dropMenu()
     this.onDropped()
+  }
+
+  /**
+   * Badges by sign-in buttons: [button, "You use Google here — you@gmail.com"]. Display
+   * only (clicks go through to the button); replaces the ones shown before.
+   */
+  showBadges(list: [Element, string][]): void {
+    const same = list.length === this.badges.length && list.every(([target, text], i) => this.badges[i]?.target === target && this.badges[i]?.text === text)
+    if (same) return this.place()
+    for (const badge of this.badges) badge.host.element.remove()
+    this.badges = []
+    if (this.noBadges) return
+    for (const [target, text] of list) {
+      const host = this.makeHost()
+      host.root.innerHTML = `<style>${BADGE_STYLE}</style><b>${MARK}</b>`
+      ;(host.root.lastChild as HTMLElement).style.setProperty('--t', JSON.stringify(text))
+      this.write(host, { 'pointer-events': 'none', width: `${BADGE_WIDTH}px`, height: '18px' })
+      this.badges.push({ host, target, text })
+    }
+    this.place()
   }
 
   /** Puts the key icon in `field`. */
@@ -196,14 +236,18 @@ export class Overlay {
       this.frameRequested = false
       if (!src) return false
       const host = this.makeHost()
-      // The host lets clicks through; only the menu itself takes them.
-      this.write(host, { 'pointer-events': 'none' })
+      // The empty part of the host takes clicks too (so the page can't tell where the panel
+      // ends), and a click there closes the menu. Clicks in the iframe stay in the iframe.
+      host.element.addEventListener('pointerdown', (event) => {
+        if (event.isTrusted) this.onOutside()
+      })
       const frame = document.createElement('iframe')
       frame.src = src
       frame.title = 'VaultKey'
-      // Transparent where the menu draws nothing; the same color scheme as the menu page, so
-      // the browser doesn't paint a backdrop behind it.
-      frame.style.cssText = `all:initial;display:block;width:100%;height:${MENU_HEIGHT}px;border:0;background:transparent;pointer-events:auto;color-scheme:normal;`
+      // Exactly the panel's size, corners clipped: no part of the frame is left to paint (an
+      // iframe's empty canvas can come out white).
+      frame.style.cssText =
+        'all:initial;display:block;width:100%;height:0;border:0;border-radius:12px;overflow:hidden;background:transparent;color-scheme:normal;box-shadow:0 8px 24px rgb(15 18 40 / 0.22);'
       host.root.append(frame)
       this.menu = host
       this.frame = frame
@@ -230,6 +274,10 @@ export class Overlay {
     if (!this.menu || !this.frame) return
     this.frameRows = rows
     this.above = above
+    const height = frameHeight(rows)
+    this.frame.style.setProperty('height', `${height}px`)
+    // Above the field, the panel sits at the bottom of the host, right on the field.
+    this.frame.style.setProperty('margin-top', above ? `${MENU_HEIGHT - height}px` : '0')
     if (this.field !== field) this.showIcon(field)
     this.menuOpen = true
     this.placed.at = performance.now()
@@ -238,6 +286,8 @@ export class Overlay {
   }
 
   hideMenu(): void {
+    // Badges wait while the menu is open (drawn after it, they'd sit above it): back now.
+    if (this.menuOpen && this.badges.length) this.schedule()
     this.menuOpen = false
     if (this.menu) this.hide(this.menu)
   }
@@ -300,6 +350,16 @@ export class Overlay {
   }
 
   private place(): void {
+    for (const { host, target } of this.badges) {
+      const rect = target.getBoundingClientRect()
+      // On the button's top edge, at its right end.
+      if (this.menuOpen || !target.isConnected || rect.width < 4 || rect.bottom < 0 || rect.top > innerHeight) {
+        this.hide(host)
+        continue
+      }
+      this.write(host, { left: `${Math.round(Math.max(GAP, rect.right - 8 - BADGE_WIDTH))}px`, top: `${Math.round(rect.top - 9)}px` })
+      this.show(host)
+    }
     const field = this.field
     if (!field || !field.isConnected) {
       this.hideIcon()

@@ -1,18 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { Actions, type ActiveTab, type Caller, type Tabs } from '../lib/actions'
+import { Actions, explain, type ActiveTab, type Caller, type Tabs } from '../lib/actions'
 import type { FillRequest } from '../lib/content-messages'
-import { parseCode, parseMatches, parseRevealed, type InnerMethod } from '../lib/inner'
+import { parseCode, parseMatches, parseRevealed, parseSearch, type InnerMethod } from '../lib/inner'
 import type { InnerReply } from '../lib/link'
 import { isPopupRequest } from '../lib/popup-messages'
 
-const samples = (
-  JSON.parse(readFileSync(new URL('./fixtures/protocol/inner.json', import.meta.url), 'utf8')) as {
-    samples: { match: Record<string, unknown>; reveal: Record<string, unknown>; totp: Record<string, unknown> }
-  }
-).samples
+const fixture = JSON.parse(readFileSync(new URL('./fixtures/protocol/inner.json', import.meta.url), 'utf8')) as {
+  samples: { match: Record<string, unknown>; search: Record<string, unknown>; reveal: Record<string, unknown>; totp: Record<string, unknown> }
+  errorCodes: string[]
+}
+const samples = fixture.samples
 
-const card = (h: string, method = 'password') => ({ ...(samples.match.cards as Record<string, unknown>[])[0], h, method })
+const card = (h: string, method = 'password'): Record<string, unknown> => ({ ...(samples.match.cards as Record<string, unknown>[])[0], h, method })
+const found = (h: string, extra: Record<string, unknown> = {}) => ({ ...(samples.search.cards as Record<string, unknown>[])[0], h, ...extra })
 
 /** VaultKey, answering from a script; records what it was asked. */
 class Vault implements Caller {
@@ -118,10 +119,83 @@ describe('Actions', () => {
     const actions = new Actions(vault, browser)
     expect(await actions.fill('H', 'popup')).toMatchObject({ ok: false, message: expect.stringContaining('isn’t secure') })
     expect(vault.asked).toEqual([])
-    expect(await actions.fill('H', 'popup', true)).toEqual({ ok: true, message: 'Filled' })
+    expect(await actions.fill('H', 'popup', { insecure: true })).toEqual({ ok: true, message: 'Filled' })
     // A code is still given for the clipboard, but not typed into the http page.
     expect(await actions.code('H')).toMatchObject({ ok: true, code: '123456' })
     expect(browser.sent).toHaveLength(1)
+  })
+
+  it('searches from the active tab’s address, at most 20 results', async () => {
+    const vault = new Vault({ search: ok({ cards: [found('S1'), found('S2', { title: 'GitLab', host: '' })] }) })
+    const result = await new Actions(vault, new Browser(github)).search('  git ')
+    expect(result).toMatchObject({ kind: 'found', q: 'git', site: 'github.com' })
+    expect(result.kind === 'found' && result.cards.map((each) => each.h)).toEqual(['S1', 'S2'])
+    expect(vault.asked).toEqual([{ method: 'search', params: { q: 'git', tabUrl: github.url, limit: 20 } }])
+    // Nothing to ask about: nothing asked.
+    const quiet = new Vault({})
+    expect(await new Actions(quiet, new Browser(github)).search('   ')).toEqual({ kind: 'found', q: '', site: 'github.com', origin: 'https://github.com', cards: [] })
+    expect(await new Actions(quiet, new Browser(github)).search('x'.repeat(201))).toMatchObject({ kind: 'found', cards: [] })
+    expect(await new Actions(quiet, new Browser({ id: 1, url: 'chrome://newtab/' })).search('git')).toEqual({ kind: 'no_site' })
+    expect(quiet.asked).toEqual([])
+  })
+
+  it('refuses a search answer with a card that claims to match the page', async () => {
+    const vault = new Vault({ search: ok({ cards: [found('S1', { tier: 'exact' })] }) })
+    expect(await new Actions(vault, new Browser(github)).search('git')).toMatchObject({ kind: 'error', message: expect.stringContaining('Update both') })
+    expect(await new Actions(new Vault({ search: no('RATE_LIMITED') }), new Browser(github)).search('git')).toMatchObject({ kind: 'error' })
+  })
+
+  it('fills or gives a code for another site’s login only with the user’s confirmation', async () => {
+    const vault = new Vault({ reveal: ok(samples.reveal), totp: ok(samples.totp) })
+    const actions = new Actions(vault, new Browser(github))
+    const confirmed = { crossSite: true, origin: 'https://github.com' }
+    expect(await actions.fill('S', 'popup', confirmed)).toEqual({ ok: true, message: 'Filled' })
+    expect(vault.asked.at(-1)).toEqual({
+      method: 'reveal',
+      params: { h: 'S', tabUrl: github.url, frameUrl: github.url, via: 'popup', confirmedCrossSite: true },
+    })
+    await actions.code('S', confirmed)
+    expect(vault.asked.at(-1)?.params).toEqual({ h: 'S', tabUrl: github.url, frameUrl: github.url, confirmedCrossSite: true })
+    // A page's own logins: the parameter isn't sent at all.
+    await actions.code('H')
+    expect(vault.asked.at(-1)?.params).toEqual({ h: 'H', tabUrl: github.url, frameUrl: github.url })
+    // VaultKey's refusal of an unconfirmed one, in words.
+    expect(await new Actions(new Vault({ reveal: no('CONFIRM_REQUIRED') }), new Browser(github)).fill('S', 'popup')).toEqual({
+      ok: false,
+      message: explain('CONFIRM_REQUIRED'),
+    })
+    // Search fills have their own, tighter limit: said as such.
+    const limited = new Actions(new Vault({ reveal: no('RATE_LIMITED'), totp: no('RATE_LIMITED') }), new Browser(github))
+    expect(await limited.fill('S', 'popup', confirmed)).toEqual({ ok: false, message: 'Too many fills from search. Try again in a few minutes.' })
+    expect(await limited.code('S', confirmed)).toMatchObject({ ok: false, message: expect.stringContaining('from search') })
+    expect(await limited.fill('H', 'popup')).toEqual({ ok: false, message: explain('RATE_LIMITED') })
+  })
+
+  it('releases nothing when the tab left the page the popup asked about', async () => {
+    // "Fill gitlab.com's login on example.org?" was answered; meanwhile the tab went elsewhere.
+    const vault = new Vault({ reveal: ok(samples.reveal), totp: ok(samples.totp) })
+    const browser = new Browser({ id: 7, url: 'https://attacker.example/login' })
+    const actions = new Actions(vault, browser)
+    const asked = { crossSite: true, origin: 'https://example.org' }
+    for (const outcome of [await actions.fill('S', 'popup', asked), await actions.code('S', asked)]) {
+      expect(outcome).toEqual({ ok: false, message: expect.stringContaining('another page') })
+    }
+    // A cross-site confirmation always names its page; a page's own login checks it too.
+    expect(await actions.fill('S', 'popup', { crossSite: true })).toMatchObject({ ok: false, message: expect.stringContaining('another page') })
+    expect(await actions.fill('H', 'popup', { origin: 'https://github.com' })).toMatchObject({ ok: false })
+    expect(vault.asked).toEqual([])
+    expect(browser.sent).toEqual([])
+    // Still there: it goes ahead (same origin, any path).
+    expect(await actions.fill('S', 'popup', { crossSite: true, origin: 'https://attacker.example' })).toEqual({ ok: true, message: 'Filled' })
+  })
+
+  it('explains every refusal VaultKey can send', () => {
+    const generic = explain('SOMETHING_NEW')
+    for (const code of fixture.errorCodes) {
+      if (code === 'BAD_REQUEST' || code === 'INTERNAL') expect(explain(code)).toBe(generic)
+      else expect(explain(code), code).not.toBe(generic)
+    }
+    expect(explain('CONFIRM_REQUIRED')).toContain('another site')
   })
 
   it('says whether the page is secure', async () => {
@@ -133,22 +207,60 @@ describe('Actions', () => {
 
 describe('the inner results', () => {
   it('accepts what the app sends (the shared samples)', () => {
-    expect(parseMatches(samples.match)?.cards[0]?.h).toBe('AAAAAAAAAAAAAAAAAAAAAA==')
-    expect(parseMatches({ site: null, cards: [], insecure: 0 })).toEqual({ site: null, cards: [], insecure: 0 })
+    const matches = parseMatches(samples.match)
+    expect(matches?.cards[0]).toMatchObject({ h: 'AAAAAAAAAAAAAAAAAAAAAA==', kind: 'account', forSite: null })
+    expect(matches?.cards[0]?.signsInWith).toEqual([{ provider: 'google', label: 'me@gmail.com' }])
+    expect(matches?.ssoHints).toEqual([{ provider: 'google', label: 'me@gmail.com' }])
+    expect(parseMatches({ site: null, cards: [], insecure: 0, ssoHints: [] })).toEqual({ site: null, cards: [], insecure: 0, ssoHints: [] })
+    expect(parseSearch(samples.search)?.map((each) => each.tier)).toEqual(['search'])
+    // Every kind, method and page tier the contract names.
+    for (const extra of [
+      { kind: 'service_login', username: null },
+      { method: 'linked' },
+      { method: 'none' },
+      { tier: 'subdomain' },
+      { tier: 'related' },
+      { forSite: 'vercel.com' },
+      { signsInWith: [] },
+      { signsInWith: [{ provider: 'okta.com', label: '' }] },
+    ]) {
+      expect(parseMatches({ ...samples.match, cards: [{ ...card('A'), ...extra }] }), JSON.stringify(extra)).not.toBeNull()
+    }
     expect(parseRevealed(samples.reveal)).toEqual({ email: 'me@x.com', username: 'me', password: 'password-1' })
     expect(parseCode(samples.totp)).toEqual({ code: '123456', expiresAt: 1700000030000 })
   })
 
   it('refuses anything else', () => {
+    const { forSite: _, ...withoutForSite } = card('A')
     const badCards = [
       { ...card('A'), extra: 1 },
-      { ...card('A'), tier: 'related' },
+      withoutForSite,
+      // `search` cards come only from `search`, and `linked` is a method, not a tier.
+      { ...card('A'), tier: 'search' },
+      { ...card('A'), tier: 'linked' },
+      { ...card('A'), kind: 'note' },
+      { ...card('A'), method: 'passkey' },
       { ...card('A'), h: 7 },
       { ...card('A'), username: 3 },
+      { ...card('A'), forSite: 1 },
+      { ...card('A'), signsInWith: null },
+      { ...card('A'), signsInWith: ['google'] },
+      { ...card('A'), signsInWith: [{ provider: 'google' }] },
+      { ...card('A'), signsInWith: [{ provider: '', label: 'me@gmail.com' }] },
+      { ...card('A'), signsInWith: [{ provider: 'google', label: 'me@gmail.com', h: 'H' }] },
     ]
     for (const bad of badCards) expect(parseMatches({ ...samples.match, cards: [bad] }), JSON.stringify(bad)).toBeNull()
     expect(parseMatches({ ...samples.match, extra: true })).toBeNull()
     expect(parseMatches({ ...samples.match, insecure: -1 })).toBeNull()
+    const { ssoHints: __, ...withoutHints } = samples.match
+    expect(parseMatches(withoutHints)).toBeNull()
+    expect(parseMatches({ ...samples.match, ssoHints: [{ provider: 'google' }] })).toBeNull()
+    expect(parseMatches({ ...samples.match, ssoHints: null })).toBeNull()
+    // Search results: every card tier `search`, and nothing else in the result.
+    for (const tier of ['exact', 'subdomain', 'related']) expect(parseSearch({ cards: [found('S', { tier })] }), tier).toBeNull()
+    expect(parseSearch({ cards: [found('S')], site: null })).toBeNull()
+    expect(parseSearch({ cards: [{ ...found('S'), extra: 1 }] })).toBeNull()
+    expect(parseSearch({})).toBeNull()
     expect(parseRevealed({ ...samples.reveal, extra: 1 })).toBeNull()
     expect(parseRevealed({ email: 'a', username: null })).toBeNull()
     expect(parseCode({ code: '12345', expiresAt: 1 })).toBeNull()
@@ -158,10 +270,46 @@ describe('the inner results', () => {
 
 describe('popup requests', () => {
   it('takes only known requests, with a handle where one is needed', () => {
-    for (const good of [{ type: 'refresh' }, { type: 'pair' }, { type: 'cards' }, { type: 'fill', h: 'H', confirmedInsecure: false }, { type: 'code', h: 'H' }]) {
+    const fill = { type: 'fill', h: 'H', confirmedInsecure: false, confirmedCrossSite: false, origin: 'https://github.com' }
+    const code = { type: 'code', h: 'H', confirmedCrossSite: false, origin: 'http://192.168.1.10:8000' }
+    for (const good of [
+      { type: 'refresh' },
+      { type: 'pair' },
+      { type: 'cards' },
+      fill,
+      { ...fill, confirmedCrossSite: true },
+      code,
+      { type: 'search', q: 'git' },
+      { type: 'search', q: 'x'.repeat(200) },
+    ]) {
       expect(isPopupRequest(good), JSON.stringify(good)).toBe(true)
     }
-    for (const bad of [{ type: 'fill' }, { type: 'fill', h: 'H' }, { type: 'fill', h: 'H', confirmedInsecure: 'yes' }, { type: 'fill', h: '', confirmedInsecure: false }, { type: 'fill', h: 'x'.repeat(65) }, { type: 'reveal', h: 'H' }, { type: 'cards', h: 'H' }, ['fill'], null]) {
+    for (const bad of [
+      { type: 'fill' },
+      { type: 'fill', h: 'H' },
+      { type: 'fill', h: 'H', confirmedInsecure: false },
+      // Without the page it was about.
+      { type: 'fill', h: 'H', confirmedInsecure: false, confirmedCrossSite: true },
+      { ...fill, confirmedInsecure: 'yes' },
+      { ...fill, confirmedCrossSite: 1 },
+      { ...fill, h: '' },
+      { ...fill, h: 'x'.repeat(65) },
+      { type: 'code', h: 'H' },
+      { type: 'code', h: 'H', confirmedCrossSite: false },
+      { ...code, origin: 'https://github.com/login' },
+      { ...fill, origin: undefined },
+      { ...fill, origin: '' },
+      { ...fill, origin: 'javascript:alert(1)' },
+      { ...fill, origin: 'https://github.com x' },
+      { type: 'search' },
+      { type: 'search', q: 7 },
+      { type: 'search', q: 'x'.repeat(201) },
+      { type: 'search', q: 'git', limit: 100 },
+      { type: 'reveal', h: 'H' },
+      { type: 'cards', h: 'H' },
+      ['fill'],
+      null,
+    ]) {
       expect(isPopupRequest(bad), JSON.stringify(bad)).toBe(false)
     }
   })

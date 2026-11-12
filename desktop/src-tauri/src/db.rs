@@ -116,6 +116,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "browser-extension",
         sql: include_str!("migrations/0008_browser_extension.sql"),
     },
+    Migration {
+        version: 9,
+        name: "app-settings",
+        sql: include_str!("migrations/0009_app_settings.sql"),
+    },
 ];
 
 /// `new Date().toISOString()`, e.g. `2026-07-15T19:44:45.457Z`, the format already in the DB.

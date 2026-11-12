@@ -45,11 +45,41 @@
           "method": "password",
           "tier": "exact",
           "hasTotp": true,
-          "signsInWith": [],
+          "signsInWith": [
+            {
+              "provider": "google",
+              "label": "me@gmail.com"
+            }
+          ],
+          "forSite": null,
           "lastUsed": null
         }
       ],
-      "insecure": 0
+      "insecure": 0,
+      "ssoHints": [
+        {
+          "provider": "google",
+          "label": "me@gmail.com"
+        }
+      ]
+    },
+    "search": {
+      "cards": [
+        {
+          "h": "AAAAAAAAAAAAAAAAAAAAAA==",
+          "kind": "account",
+          "title": "github.com",
+          "host": "github.com",
+          "email": "me@x.com",
+          "username": null,
+          "method": "password",
+          "tier": "search",
+          "hasTotp": true,
+          "signsInWith": [],
+          "forSite": null,
+          "lastUsed": null
+        }
+      ]
     },
     "reveal": {
       "email": "me@x.com",
@@ -65,6 +95,7 @@
     "BAD_REQUEST",
     "UNKNOWN_HANDLE",
     "ORIGIN_MISMATCH",
+    "CONFIRM_REQUIRED",
     "NO_SECRET",
     "RATE_LIMITED",
     "LOCKED",

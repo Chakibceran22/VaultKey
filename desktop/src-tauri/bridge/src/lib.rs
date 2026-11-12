@@ -9,7 +9,8 @@
 //! - [`message`]: the plaintext messages (none carry vault data).
 //! - [`noise`]: the encrypted channel, and pairing's keys and codes.
 //! - [`inner`]: what travels inside the channel; [`api`]: the methods it carries.
-//! - [`matcher`]: which saved websites belong to a page (the security boundary of filling).
+//! - [`matcher`]: which saved websites belong to a page (the security boundary of filling);
+//!   [`related`]: the sites that share one account; [`provider`]: sign-in providers.
 //! - [`address`]: where the app listens, per build flavor.
 //! - [`server`]: the app's end: pairing, handshakes, sessions.
 //! - [`register`]: the host manifests that let the browsers start the bridge.
@@ -23,7 +24,9 @@ pub mod inner;
 pub mod matcher;
 pub mod message;
 pub mod noise;
+pub mod provider;
 pub mod register;
+pub mod related;
 pub mod server;
 #[cfg(windows)]
 pub mod windows;

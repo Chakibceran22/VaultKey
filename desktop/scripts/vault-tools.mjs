@@ -161,6 +161,12 @@ function snapshot(args) {
 function rehearse() {
   const source = realVault()
   if (!source) throw new Refusal(`No real vault found under ${configDir()}.`)
+  // The rehearsal is one of the app's tests, and the app only builds with the browser
+  // bridge in src-tauri/binaries/ (Tauri's externalBin): build it first, before any copy.
+  const bridge = spawnSync(process.execPath, [join(DESKTOP, 'scripts', 'bundle-bridge.mjs')], { stdio: 'inherit' })
+  if (bridge.status !== 0) {
+    throw new Refusal('The browser bridge didn’t build, and the app needs it to build. Your real vault was not touched.')
+  }
   const workspace = mkdtempSync(join(tmpdir(), 'vaultkey-rehearsal-'))
   try {
     const copy = copyVault(source, workspace)

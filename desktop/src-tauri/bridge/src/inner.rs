@@ -36,6 +36,8 @@ pub enum Code {
     UnknownHandle,
     /// The handle's account doesn't match this page.
     OriginMismatch,
+    /// A popup search result, used without the user's "Fill anyway on this site?".
+    ConfirmRequired,
     /// No password, or no authenticator setup key.
     NoSecret,
     RateLimited,

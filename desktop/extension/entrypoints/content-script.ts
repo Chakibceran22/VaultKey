@@ -5,7 +5,10 @@
 // on the icon.
 // It never sees account names (the menu gets them from the service worker), fills only
 // when the service worker asks, for the origin the values were released for, and keeps
-// nothing. Pages without a login field get nothing drawn and no work after the idle scan.
+// nothing. Pages without a login field get nothing drawn, and little work after the idle
+// scan (a batched look when fields or buttons are added).
+// One exception (M4): by a "Continue with Google" button, a badge says which Google account
+// you use on this site, when VaultKey knows (top frame only; display only, never a fill).
 
 import { fieldKind, findTarget } from '@/lib/classify'
 import { isFillRequest, type FillRequest, type FillResult } from '@/lib/content-messages'
@@ -17,14 +20,18 @@ import {
   type FoundReply,
   type MenuKey,
   type OpenReply,
+  type SsoReply,
   type TokenReply,
 } from '@/lib/inline-messages'
 import { Overlay } from '@/lib/overlay'
+import { signInButtons } from '@/lib/sso'
 
 /** How long an answer about this frame's logins is reused. */
 const FOUND_MS = 3_000
 /** How long the menu iframe may take to load and connect. */
 const READY_MS = 2_000
+/** How long the sign-in hints for this page are reused (the service worker's cache). */
+const SSO_MS = 30_000
 
 /** A menu iframe being made with `token`, until it connects (`vk.ready`) or times out. */
 interface Waiting {
@@ -32,6 +39,8 @@ interface Waiting {
   resolve: (ready: boolean) => void
   token: string | null
 }
+/** Added nodes that may be (or hold) a login field or a sign-in button: worth a scan. */
+const WATCHED = 'input,button,iframe'
 /** Fields worth a closer look, by attributes alone (no style work): the idle scan starts
  * only if one of these is on the page. A focused field is always looked at. */
 const LIKELY =
@@ -65,10 +74,11 @@ function ask<T>(request: ContentRequest): Promise<T | undefined> {
   )
 }
 
-export default defineContentScript({
-  matches: ['http://*/*', 'https://*/*'],
-  runAt: 'document_start',
-  allFrames: true,
+// Listed in the manifest (lib/manifest.ts: every http(s) frame, at document_start) as a
+// plain script, not a WXT content script: WXT's wrapper for those (ContentScriptContext) is
+// about 2 KB this script never uses, and it posts a message carrying the extension's ID to
+// every page, which lets any site tell that VaultKey is installed.
+export default defineUnlistedScript({
   main() {
     let focused: WeakRef<HTMLInputElement> | null = null
     let found: { at: number; answer: FoundReply } | null = null
@@ -79,11 +89,25 @@ export default defineContentScript({
     let rows = 0
     let active = -1
     let pickable = false
+    /** This page's sign-in hints: provider → the badge's text. */
+    let sso: { at: number; hints: Map<string, string> } | null = null
 
     const overlay = new Overlay(
       () => void toggle(),
       () => (menuReady = null),
+      () => close(),
     )
+
+    /** Badges by the page's sign-in buttons for the providers this site's accounts use. */
+    async function signIns(): Promise<void> {
+      if (!sso || Date.now() - sso.at > SSO_MS) {
+        // Asked only when the page has a sign-in button.
+        if (!signInButtons(document, null).length) return
+        const answer = await ask<SsoReply>({ type: 'vk.sso' })
+        sso = { at: Date.now(), hints: new Map(Array.isArray(answer?.hints) ? answer.hints : []) }
+      }
+      overlay.showBadges(signInButtons(document, sso.hints))
+    }
 
     async function logins(): Promise<FoundReply> {
       if (found && Date.now() - found.at < FOUND_MS) return found.answer
@@ -159,6 +183,7 @@ export default defineContentScript({
     let scanning = 0
     const scan = (): void => {
       scanning = 0
+      if (window === top) void signIns()
       if (overlay.anchor?.isConnected || !document.querySelector(LIKELY)) return
       const target = findTarget(document, null)
       const field = target?.username ?? target?.password ?? target?.code
@@ -175,7 +200,7 @@ export default defineContentScript({
       scanning = window.setTimeout(() => requestIdleCallback(scan, { timeout: 500 }), 300)
     }
     const watcher = new MutationObserver((changes) => {
-      if (changes.some((change) => [...change.addedNodes].some((node) => node instanceof Element && (node.matches('input') || node.querySelector('input'))))) later()
+      if (changes.some((change) => [...change.addedNodes].some((node) => node instanceof Element && (node.matches(WATCHED) || node.querySelector(WATCHED))))) later()
     })
     const watch = (): void => {
       if (document.hidden) return watcher.disconnect()

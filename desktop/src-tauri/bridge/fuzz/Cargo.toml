@@ -1,0 +1,25 @@
+# Fuzzing the matcher's normaliser with cargo-fuzz (libFuzzer): plans/04, "Tests". Its own
+# workspace (the table at the end), so the app's workspace in src-tauri never builds it.
+# How to run it: fuzz_targets/normalise.rs.
+[package]
+name = "vaultkey-bridge-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+vaultkey-bridge = { path = ".." }
+
+[[bin]]
+name = "normalise"
+path = "fuzz_targets/normalise.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

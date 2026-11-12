@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
 import { AnimatePresence, m } from 'framer-motion'
-import { FileArrowDown, Key, LockKey, MagnifyingGlass, PuzzlePiece } from '@phosphor-icons/react'
+import { FileArrowDown, GearSix, Key, LockKey, MagnifyingGlass } from '@phosphor-icons/react'
 import { useQuery } from '@tanstack/react-query'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -16,12 +16,30 @@ import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
 import { cn } from '@renderer/lib/utils'
 import { SearchConsole } from '@renderer/components/search/SearchConsole'
-import { BrowserExtension } from './BrowserExtension'
+import type { BackgroundSettings } from '@renderer/shared/contracts'
+import { BACKGROUND_QUERY, TRAY, useBackgroundSettings } from './Background'
 import { ChangePassword } from './ChangePassword'
 import { RecoverySetup } from './RecoverySetup'
 import { HistoryGestures } from './HistoryGestures'
 import { PairingDialog } from './PairingDialog'
+import { Settings } from './Settings'
 import { ThemeToggle } from './ThemeToggle'
+
+/** The toast for a lock VaultKey did by itself: the `vault://locked` reason (src-tauri/src/idle.rs). */
+function lockedMessage(reason: string, minutes: number | undefined): string {
+  switch (reason) {
+    case 'idle':
+      return minutes ? `VaultKey locked after ${plural(minutes, 'minute')} without use` : 'VaultKey locked: it wasn’t used for a while'
+    case 'sleep':
+      return 'VaultKey locked when your computer went to sleep'
+    case 'screen-lock':
+      return 'VaultKey locked when your screen locked'
+    case 'tray':
+      return `VaultKey locked from the ${TRAY}`
+    default:
+      return 'VaultKey locked'
+  }
+}
 
 const SECTIONS = [
   { to: '/accounts', label: 'Accounts' },
@@ -40,7 +58,7 @@ export function AppFrame() {
   const { logout } = useAuth()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
-  const [extensionOpen, setExtensionOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [newCode, setNewCode] = useState(false)
   // How the vault is protected: a vault with its vault key but no recovery code must
   // save one before anything else; an older vault that can't move yet says why.
@@ -95,7 +113,10 @@ export function AppFrame() {
     lastPath.current = pathname
   }, [key, pathname, navigationType])
 
-  // ⌘K search, ⌘1–3 sections, ⌘L lock.
+  // Loaded for the toast when it locks by itself ("after 5 minutes without use").
+  useBackgroundSettings()
+
+  // ⌘K search, ⌘1–3 sections, ⌘, settings, ⌘L lock.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!isModKey(event)) return
@@ -110,6 +131,9 @@ export function AppFrame() {
         // ⌘K closes the palette; it never opens over a modal or a confirmation.
         if (paletteRef.current) setPaletteOpen(false)
         else if (!isOverlayOpen()) setPaletteOpen(true)
+      } else if (key === ',' && !isOverlayOpen()) {
+        event.preventDefault()
+        setSettingsOpen(true)
       } else if (section && !isOverlayOpen()) {
         event.preventDefault()
         navigate(SECTIONS[Number(section[1]) - 1].to)
@@ -119,8 +143,9 @@ export function AppFrame() {
     return () => window.removeEventListener('keydown', onKey)
   }, [lock, navigate])
 
-  // Using the window keeps the vault open; 5 minutes without use, and Rust locks it
-  // (src-tauri/src/idle.rs). Reported at most every 30 s.
+  // Using the window keeps the vault open; after the auto-lock time without use (Settings),
+  // or on sleep, screen lock or the tray's Lock, Rust locks it and says why
+  // (src-tauri/src/idle.rs). Use is reported at most every 30 s.
   useEffect(() => {
     if (!isTauri()) return
     let last = 0
@@ -134,11 +159,14 @@ export function AppFrame() {
     for (const name of events) window.addEventListener(name, report, { passive: true, capture: true })
     let off: (() => void) | null = null
     let alive = true
-    listen<string>('vault://locked', () => {
+    listen<string>('vault://locked', ({ payload }) => {
+      // Read before clear() empties the cache.
+      const minutes = queryClient.getQueryData<BackgroundSettings>(BACKGROUND_QUERY)?.autoLockMinutes
+      const message = lockedMessage(payload, minutes)
       queryClient.clear()
       useAuth.setState({ isAuthenticated: false })
       navigate('/login')
-      toast.message('VaultKey locked after 5 minutes without use')
+      toast.message(message)
     }).then(
       (unlisten) => (alive ? (off = unlisten) : unlisten()),
       () => {}
@@ -223,8 +251,8 @@ export function AppFrame() {
           <Kbd className="ml-auto bg-background/60">{MOD}K</Kbd>
         </button>
         <ThemeToggle />
-        <IconButton label="Browser extension" onClick={() => setExtensionOpen(true)}>
-          <PuzzlePiece size={17} />
+        <IconButton label="Settings" shortcut={`${MOD},`} onClick={() => setSettingsOpen(true)}>
+          <GearSix size={17} />
         </IconButton>
         <IconButton label="Change master password" onClick={() => setChangingPassword(true)}>
           <Key size={17} />
@@ -256,7 +284,7 @@ export function AppFrame() {
           void security.refetch()
         }}
       />
-      <BrowserExtension open={extensionOpen} onOpenChange={setExtensionOpen} />
+      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
       <PairingDialog />
       <HistoryGestures page={mainRef} />
 

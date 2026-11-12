@@ -4,7 +4,7 @@
 // login at a time to the tab's content script, which fills and drops it.
 
 import { isFillResult, type FillRequest, type FillResult } from './content-messages'
-import { parseCode, parseMatches, parseRevealed, type Card, type InnerMethod } from './inner'
+import { parseCode, parseMatches, parseRevealed, parseSearch, type Card, type InnerMethod } from './inner'
 import type { InnerReply } from './link'
 
 /** The active tab, from the browser. */
@@ -24,13 +24,39 @@ export interface Caller {
 }
 
 export type CardsResult =
-  /** `secure`: the page is https. On http, anyone on the network can read what's sent. */
-  | { kind: 'cards'; site: string; cards: Card[]; insecure: number; secure: boolean }
+  /** `secure`: the page is https. On http, anyone on the network can read what's sent.
+   * `origin`: the page's, for the popup to send back with a fill (see `Confirm`). */
+  | { kind: 'cards'; site: string; origin: string; cards: Card[]; insecure: number; secure: boolean }
   /** Not a web page (a new tab, settings, a PDF viewer…). */
   | { kind: 'no_site' }
   | { kind: 'error'; message: string }
 
+export type SearchResult =
+  /** `q`: what was searched (the popup drops answers to an older query). `site`, `origin`:
+   * the tab's, as for `cards`. */
+  | { kind: 'found'; q: string; site: string; origin: string; cards: Card[] }
+  | { kind: 'no_site' }
+  | { kind: 'error'; message: string }
+
+/** Most search results the popup shows (the app allows 1–20). */
+export const SEARCH_LIMIT = 20
+export const MAX_QUERY = 200
+
 export type Outcome = { ok: true; message: string } | { ok: false; message: string }
+
+/** What the person confirmed in the popup, about the page it showed them. */
+export interface Confirm {
+  /** "Fill anyway" on an http page. */
+  insecure?: boolean
+  /** "Fill gitlab.com's login on example.org?": a search result, for another site. */
+  crossSite?: boolean
+  /** The page the popup showed (and asked about). If the tab has moved on since (a redirect
+   * while the question was open), nothing is released: the answer was about another page.
+   * Required with `crossSite`. */
+  origin?: string
+}
+
+const MOVED = 'This tab went to another page since you chose the login. Open the popup again.'
 
 export type CodeResult = { ok: true; code: string; expiresAt: number } | { ok: false; message: string }
 
@@ -41,6 +67,8 @@ export function explain(code: string): string {
       return 'This list is out of date. Close and reopen the popup.'
     case 'ORIGIN_MISMATCH':
       return 'That login isn’t for this page.'
+    case 'CONFIRM_REQUIRED':
+      return 'That login is for another site. Confirm before using it here.'
     case 'NO_SECRET':
       return 'VaultKey has no password or setup key saved for it.'
     case 'RATE_LIMITED':
@@ -52,8 +80,30 @@ export function explain(code: string): string {
   }
 }
 
+/** A refusal, in words; a search result's own fill limit (VaultKey allows only a few a
+ * minute and an hour) says so. */
+function refusal(code: string, confirm: Confirm): string {
+  return confirm.crossSite && code === 'RATE_LIMITED' ? 'Too many fills from search. Try again in a few minutes.' : explain(code)
+}
+
+/** Whether `confirm` was about the page now in the tab (`origin`). */
+function samePage(confirm: Confirm, origin: string): boolean {
+  return confirm.origin === undefined ? !confirm.crossSite : confirm.origin === origin
+}
+
 function failure(error: unknown): { ok: false; message: string } {
   return { ok: false, message: error instanceof Error ? error.message : 'VaultKey couldn’t do that.' }
+}
+
+/** Sent only when set: the parameter is optional, and a page's own logins never need it. */
+const crossSite = (confirmed: boolean | undefined) => (confirmed ? { confirmedCrossSite: true } : {})
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
 }
 
 function originOf(url: string): string | null {
@@ -83,6 +133,7 @@ export class Actions {
       return {
         kind: 'cards',
         site: matches.site.host,
+        origin: originOf(tab.url) ?? '',
         cards: matches.cards,
         insecure: matches.insecure,
         secure: tab.url.startsWith('https:'),
@@ -93,19 +144,44 @@ export class Actions {
   }
 
   /**
-   * Fills card `h`'s login into the active tab's login form. On an http page only once
-   * the user confirmed it (`confirmedInsecure`), checked here against the tab as it is now.
+   * The popup's search: logins for any site, by name, website, email or username. Only the
+   * popup calls this (never a page or the inline menu): it's how the vault is browsed.
    */
-  async fill(h: string, via: 'popup' | 'shortcut', confirmedInsecure = false): Promise<Outcome> {
+  async search(query: string): Promise<SearchResult> {
+    const q = query.trim()
+    const tab = await this.tabs.active()
+    if (!tab || !/^https?:/.test(tab.url)) return { kind: 'no_site' }
+    const page = { q, site: hostOf(tab.url), origin: originOf(tab.url) ?? '' }
+    if (q.length === 0 || q.length > MAX_QUERY) return { kind: 'found', ...page, cards: [] }
+    try {
+      const reply = await this.vault.call('search', { q, tabUrl: tab.url, limit: SEARCH_LIMIT })
+      if (!reply.ok) return { kind: 'error', message: explain(reply.e.code) }
+      const cards = parseSearch(reply.r)
+      if (!cards) return { kind: 'error', message: 'VaultKey answered something this extension doesn’t understand. Update both.' }
+      return { kind: 'found', ...page, cards: cards.slice(0, SEARCH_LIMIT) }
+    } catch (error) {
+      return { kind: 'error', message: failure(error).message }
+    }
+  }
+
+  /**
+   * Fills card `h`'s login into the active tab's login form (its top frame). On an http page
+   * only once the user confirmed it (`confirm.insecure`), checked here against the tab as it
+   * is now. A search result is for another site: VaultKey releases it only with
+   * `confirmedCrossSite`, which only the popup's second click sets, and only while the tab
+   * is still on the page that click was about.
+   */
+  async fill(h: string, via: 'popup' | 'shortcut', confirm: Confirm = {}): Promise<Outcome> {
     const tab = await this.tabs.active()
     const origin = tab && originOf(tab.url)
     if (!tab || !origin) return { ok: false, message: 'There’s no page to fill.' }
-    if (!tab.url.startsWith('https:') && !confirmedInsecure) {
+    if (!samePage(confirm, origin)) return { ok: false, message: MOVED }
+    if (!tab.url.startsWith('https:') && !confirm.insecure) {
       return { ok: false, message: 'This page isn’t secure (http). Open the popup again to fill it anyway.' }
     }
     try {
-      const reply = await this.vault.call('reveal', { h, tabUrl: tab.url, frameUrl: tab.url, via })
-      if (!reply.ok) return { ok: false, message: explain(reply.e.code) }
+      const reply = await this.vault.call('reveal', { h, tabUrl: tab.url, frameUrl: tab.url, via, ...crossSite(confirm.crossSite) })
+      if (!reply.ok) return { ok: false, message: refusal(reply.e.code, confirm) }
       const login = parseRevealed(reply.r)
       if (!login) return { ok: false, message: 'VaultKey answered something this extension doesn’t understand.' }
       return this.deliver(tab, { type: 'vaultkey.fill', origin, login, code: null })
@@ -114,14 +190,17 @@ export class Actions {
     }
   }
 
-  /** Card `h`'s current code: for the clipboard, and filled into a code field if the page has one. */
-  async code(h: string): Promise<CodeResult> {
+  /** Card `h`'s current code: for the clipboard, and filled into a code field if the page
+   * has one. A search result's needs `confirm.crossSite` and the page it was about, as for
+   * `fill`. */
+  async code(h: string, confirm: Confirm = {}): Promise<CodeResult> {
     const tab = await this.tabs.active()
     const origin = tab && originOf(tab.url)
     if (!tab || !origin) return { ok: false, message: 'There’s no page for this code.' }
+    if (!samePage(confirm, origin)) return { ok: false, message: MOVED }
     try {
-      const reply = await this.vault.call('totp', { h, tabUrl: tab.url, frameUrl: tab.url })
-      if (!reply.ok) return { ok: false, message: explain(reply.e.code) }
+      const reply = await this.vault.call('totp', { h, tabUrl: tab.url, frameUrl: tab.url, ...crossSite(confirm.crossSite) })
+      if (!reply.ok) return { ok: false, message: refusal(reply.e.code, confirm) }
       const code = parseCode(reply.r)
       if (!code) return { ok: false, message: 'VaultKey answered something this extension doesn’t understand.' }
       // Copied either way; typed into the page only if it's secure.

@@ -3,7 +3,9 @@
 //   content script ──runtime.sendMessage──► service worker ──port──► menu (extension iframe)
 //
 // The content script never sees account names: it learns whether to show the key icon and
-// how many rows the menu has. Cards go from the service worker to the menu only.
+// how many rows the menu has. Cards go from the service worker to the menu only. The one
+// exception is `vk.sso`: the badge by a "Continue with Google" button says which Google
+// account you use on this site (plans/04, "Signs in with"), drawn where the page can't read it.
 
 /** What kind of field the menu opens on. */
 export type FieldKind = 'username' | 'password' | 'code'
@@ -19,6 +21,8 @@ export type ContentRequest =
   /** A real (isTrusted) key in the field while the menu is open. */
   | { type: 'vk.key'; key: MenuKey }
   | { type: 'vk.closed' }
+  /** The page has "Continue with …" buttons: which providers do this site's accounts use? */
+  | { type: 'vk.sso' }
 
 export type MenuKey = 'ArrowDown' | 'ArrowUp' | 'Enter'
 
@@ -33,6 +37,12 @@ export type TokenReply = { token: string | null }
  * menu for this frame (it restarted, or the page came back from the back/forward cache). */
 export type OpenReply = { rows: number; menu: boolean; pickable: boolean }
 
+/** One badge per provider: [provider id (to find its button), what the badge says].
+ * Empty unless VaultKey is unlocked and this frame's own site has accounts that sign in
+ * with a provider. Pairs, so the content script makes its map in one step. */
+export type SsoReply = { hints: [provider: string, text: string][] }
+export const MAX_SSO_HINTS = 4
+
 /** Service worker → content script (tabs.sendMessage to that frame). */
 export type ContentCommand =
   /** Before a click in the menu counts: is the menu really on screen, unobstructed? */
@@ -44,11 +54,14 @@ export type ContentCommand =
 /** `stableMs`: how long the menu has stayed exactly where it is. */
 export type VerifyReply = { visible: boolean; stableMs: number }
 
-/** One row of the menu: no secrets. */
+/** One row of the menu: no secrets. `fillable: false`: a hint ("Signs in with Google ·
+ * you@gmail.com"), shown but not picked. */
 export interface MenuCard {
   h: string
   name: string
   where: string
+  /** The letter on the row's tile. */
+  tile: string
   hasTotp: boolean
   fillable: boolean
 }
@@ -88,6 +101,7 @@ export function isContentRequest(value: unknown): value is ContentRequest {
     case 'vk.found':
     case 'vk.token':
     case 'vk.closed':
+    case 'vk.sso':
       return keys(message) === 'type'
     case 'vk.open':
       return keys(message) === 'above,kind,type' && KINDS.includes(message.kind as string) && typeof message.above === 'boolean'

@@ -12,6 +12,10 @@
 //! after a click (`vaultkey_bridge::api`). The app only hands over data: the matching, the
 //! handles and the rate limits are in the bridge crate. Every fill is listed in Settings
 //! ("Recent fills", memory only, cleared on lock).
+//!
+//! M4: project services' own logins are offered too (a server's root user), and Settings
+//! lists the saved websites the extension can't match ("GitHub") with an address to give
+//! them. That rename is a vault write the user makes in the app, never the extension.
 
 use std::{
     collections::VecDeque,
@@ -29,7 +33,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{oneshot, watch};
 use vaultkey_bridge::{
     address::{self, Flavor},
-    api::{AuthCode, Entry, Fill, FillKind, Login},
+    api::{AuthCode, Entry, Fill, FillKind, Login, LoginKind},
     message::{Browser, VaultState},
     noise::{ClientId, PrivateKey, PublicKey},
     register::{self, BrowserStatus, Registrar},
@@ -38,7 +42,7 @@ use vaultkey_bridge::{
 
 use crate::commands::MAIN_WINDOW;
 use crate::error::{ErrorCode, VaultError, VaultResult, log_failure};
-use crate::vault::{PairedBrowser, Vault};
+use crate::vault::{PairedBrowser, UnmatchedWebsites, Vault};
 
 pub mod commands;
 
@@ -85,9 +89,12 @@ const MAX_RECENT: usize = 50;
 pub struct RecentFill {
     pub at: String,
     pub browser: String,
+    /// "github.com · me@x.com", or for a service's own login "Prod server · root".
     pub account: String,
     pub site: String,
     pub what: FillKind,
+    /// Filled from popup search on a site it isn't saved for, after the user confirmed.
+    pub cross_site: bool,
 }
 
 /// The accounts for matching, valid for one lock count and one database revision.
@@ -208,6 +215,23 @@ pub fn start(app: &AppHandle) {
     }
 }
 
+/// What "Recent fills" calls a login: "github.com · me@x.com" for an account,
+/// "Prod server · root" for a service's own login. Account and service login ids are
+/// separate counters, so both the kind and the id must agree.
+fn fill_label(entries: &[Entry], kind: LoginKind, id: i64) -> String {
+    entries
+        .iter()
+        .map(|entry| &entry.account)
+        .find(|account| account.kind == kind && account.id == id)
+        .map_or_else(
+            || match kind {
+                LoginKind::Account => "A deleted account".into(),
+                LoginKind::ServiceLogin => "A deleted login".into(),
+            },
+            |account| format!("{} · {}", account.title.trim(), account.email),
+        )
+}
+
 /// How a vault error reaches the extension: never its details.
 fn refusal(error: VaultError) -> Refusal {
     match error.code {
@@ -297,22 +321,54 @@ impl Bridge {
         if recorded.is_empty() {
             return Ok(Vec::new());
         }
-        let vault = self.vault();
-        let names = vault.paired_browser_names()?;
-        let accounts = vault.extension_accounts()?;
+        let names = self.vault().paired_browser_names()?;
+        // The matcher's own list (cached): the names are there, nothing more is opened.
+        let entries = self.entries()?;
         Ok(recorded
             .into_iter()
             .map(|(at, fill)| RecentFill {
                 at,
                 browser: names.get(&fill.client).cloned().unwrap_or_else(|| "A removed browser".into()),
-                account: accounts
-                    .iter()
-                    .find(|account| account.id == fill.account)
-                    .map_or_else(|| "A deleted account".into(), |account| format!("{} · {}", account.website.trim(), account.email)),
+                account: fill_label(&entries, fill.kind, fill.account),
                 site: fill.site,
                 what: fill.what,
+                cross_site: fill.cross_site,
             })
             .collect())
+    }
+
+    /// The accounts and service logins for matching, websites normalised: from the cache
+    /// while the vault's lock count and revision are the same, else read again.
+    fn entries(&self) -> VaultResult<Arc<[Entry]>> {
+        let vault = self.vault();
+        let (unlocked, locks) = vault.lock_state();
+        if !unlocked {
+            return Err(VaultError::locked("Unlock the vault first."));
+        }
+        let revision = vault.revision()?;
+        let mut index = lock(&self.index);
+        if let Some(cached) = index.as_ref()
+            && (cached.locks, cached.revision) == (locks, revision)
+        {
+            return Ok(Arc::clone(&cached.entries));
+        }
+        // Read after the revision: a write in between makes the next call rebuild.
+        let entries: Arc<[Entry]> = vault.extension_accounts()?.into_iter().map(Entry::new).collect();
+        *index = Some(CachedIndex { locks, revision, entries: Arc::clone(&entries) });
+        Ok(entries)
+    }
+
+    /// Settings → Browser extension: the saved websites the extension can't match.
+    pub fn unmatched_websites(&self) -> VaultResult<UnmatchedWebsites> {
+        self.vault().unmatched_websites()
+    }
+
+    /// Gives a saved website the address the extension matches ("GitHub" → "github.com"),
+    /// then lists what's left. The revision moves, so the next match reads it.
+    pub fn set_website_address(&self, domain_id: i64, address: &str) -> VaultResult<UnmatchedWebsites> {
+        let vault = self.vault();
+        vault.rename_domain(domain_id, address)?;
+        vault.unmatched_websites()
     }
 
     /// On: registers the bridge and listens (again, if listening had failed). Off: every
@@ -574,30 +630,15 @@ impl App for Bridge {
         if !self.enabled.load(Ordering::SeqCst) {
             return Err(Refusal::Disabled);
         }
-        let vault = self.vault();
-        let (unlocked, locks) = vault.lock_state();
-        if !unlocked {
-            return Err(Refusal::Locked);
-        }
-        let revision = vault.revision().map_err(refusal)?;
-        let mut index = lock(&self.index);
-        if let Some(cached) = index.as_ref()
-            && (cached.locks, cached.revision) == (locks, revision)
-        {
-            return Ok(Arc::clone(&cached.entries));
-        }
-        // Read after the revision: a write in between makes the next call rebuild.
-        let entries: Arc<[Entry]> = vault.extension_accounts().map_err(refusal)?.into_iter().map(Entry::new).collect();
-        *index = Some(CachedIndex { locks, revision, entries: Arc::clone(&entries) });
-        Ok(entries)
+        self.entries().map_err(refusal)
     }
 
-    fn login(&self, account: i64) -> Result<Option<Login>, Refusal> {
-        self.vault().extension_login(account).map_err(refusal)
+    fn login(&self, kind: LoginKind, id: i64) -> Result<Option<Login>, Refusal> {
+        self.vault().extension_login(kind, id).map_err(refusal)
     }
 
-    fn code(&self, account: i64) -> Result<Option<AuthCode>, Refusal> {
-        self.vault().extension_code(account).map_err(refusal)
+    fn code(&self, kind: LoginKind, id: i64) -> Result<Option<AuthCode>, Refusal> {
+        self.vault().extension_code(kind, id).map_err(refusal)
     }
 
     fn open_window(&self) {
@@ -636,5 +677,37 @@ impl App for Bridge {
             recent.pop_front();
         }
         recent.push_back(Recorded { at: crate::db::now_iso(), fill });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vaultkey_bridge::api::Account;
+
+    #[test]
+    fn recent_fills_name_accounts_and_service_logins_apart() {
+        let entry = |kind, id, title: &str, email: &str| {
+            Entry::new(Account {
+                kind,
+                id,
+                title: title.into(),
+                website: title.into(),
+                email: email.into(),
+                username: None,
+                has_password: true,
+                has_totp: false,
+                signs_in_with: Vec::new(),
+            })
+        };
+        // The same number in both tables.
+        let entries = [
+            entry(LoginKind::Account, 1, "github.com", "me@x.com"),
+            entry(LoginKind::ServiceLogin, 1, "Prod server", "root"),
+        ];
+        assert_eq!(fill_label(&entries, LoginKind::Account, 1), "github.com · me@x.com");
+        assert_eq!(fill_label(&entries, LoginKind::ServiceLogin, 1), "Prod server · root");
+        assert_eq!(fill_label(&entries, LoginKind::Account, 2), "A deleted account");
+        assert_eq!(fill_label(&entries, LoginKind::ServiceLogin, 2), "A deleted login");
     }
 }

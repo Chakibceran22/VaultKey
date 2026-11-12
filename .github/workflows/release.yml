@@ -32,15 +32,18 @@ jobs:
             runner: macos-latest
             args: --target universal-apple-darwin
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            bridge: --release --target universal-apple-darwin
           # 22.04: its older glibc lets the .deb and AppImage run on more distributions.
           - name: Linux
             runner: ubuntu-22.04
             args: ''
             rust-targets: ''
+            bridge: --release
           - name: Windows
             runner: windows-latest
             args: ''
             rust-targets: ''
+            bridge: --release
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +79,16 @@ jobs:
         # The desktop app only: the browser extension (a workspace package) isn't part of
         # this build, so its toolchain stays out of the release job.
         run: pnpm install --frozen-lockfile --filter vaultkey
+
+      # The browser bridge, bundled beside the app's executable (bundle.externalBin): it
+      # goes to src-tauri/binaries/vaultkey-bridge-<target triple>. For the universal Mac
+      # app, both architectures are built and joined with lipo, and the single-architecture
+      # files stay (Tauri builds the app once per architecture and checks for each).
+      # beforeBuildCommand runs the same script again; by then it's a quick no-op. Done here
+      # first so a failure shows as its own step.
+      - name: Build the browser bridge
+        working-directory: desktop
+        run: node scripts/bundle-bridge.mjs ${{ matrix.bridge }}
 
       - uses: tauri-apps/tauri-action@v0
         env:

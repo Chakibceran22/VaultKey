@@ -298,9 +298,23 @@ const bridge = {
   ],
   paired: [{ id: 1, name: 'Brave on macOS', createdAt: iso(3), lastSeenAt: iso(0.01) }],
   recent: [
-    { at: iso(0.002), browser: 'Brave on macOS', account: 'github.com · alice@example.com', site: 'github.com', what: 'login' as const }
+    { at: iso(0.002), browser: 'Brave on macOS', account: 'github.com · alice@example.com', site: 'github.com', what: 'login' as const, crossSite: false },
+    { at: iso(0.03), browser: 'Brave on macOS', account: 'stripe.com · billing@example.com', site: 'dashboard.example.dev', what: 'login' as const, crossSite: true }
   ]
 }
+
+/**
+ * Websites saved as a name the extension can't match. Kept apart from `domains` so the
+ * accounts list (and the README's screenshots) stays as it is. Sorted by name, like the app.
+ */
+let unmatched = [
+  { domainId: 102, name: 'GitHub work', suggestion: 'github.com', accounts: 2 },
+  { domainId: 101, name: 'GitLab', suggestion: 'gitlab.com', accounts: 1 },
+  { domainId: 103, name: 'Home router', suggestion: null as string | null, accounts: 1 }
+]
+
+/** Background & auto-lock, in memory, with the app's defaults. */
+const background = { keepRunning: true, autoLockMinutes: 5 }
 
 function handle(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
@@ -656,6 +670,25 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
       return null
     case 'answer_pairing':
       return fail('NOT_FOUND', 'That pairing request has already ended.')
+    case 'unmatched_websites':
+      return { websites: unmatched }
+    case 'set_website_address': {
+      const address = String(args.address).trim().toLowerCase()
+      // Like the app: an address needs a dot (or is an IP); a name stays unmatchable.
+      if (!address.includes('.')) fail('INVALID_INPUT', 'Enter a web address, like github.com.')
+      if (domains.some((d) => d.name.toLowerCase() === address)) fail('ALREADY_EXISTS', 'A website with that address is already saved.')
+      unmatched = unmatched.filter((w) => w.domainId !== args.domainId)
+      return { websites: unmatched }
+    }
+    case 'background_settings':
+      return background
+    case 'set_background_settings': {
+      const minutes = args.autoLockMinutes as number
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) fail('INVALID_INPUT', 'Auto-lock is 1 to 60 minutes.')
+      background.keepRunning = args.keepRunning === true
+      background.autoLockMinutes = minutes
+      return background
+    }
     case 'plugin:clipboard-manager|write_text':
     case 'plugin:clipboard-manager|write_secret':
       return null

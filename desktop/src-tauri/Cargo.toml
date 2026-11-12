@@ -21,7 +21,8 @@ members = ["search", "bridge"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `tray-icon`: background mode's tray / menu-bar icon (src/background.rs).
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -55,6 +56,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # expose: the same crate and features wry already builds.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "WKWebView"] }
+# Auto-lock on sleep and screen lock (src/idle.rs): NSWorkspace's notifications and the
+# screen-lock distributed notification. The versions Tauri already builds.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSNotification", "NSDistributedNotificationCenter"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
 
 [dev-dependencies]
 tempfile = "3"

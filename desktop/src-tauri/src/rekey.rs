@@ -94,6 +94,8 @@ pub const PLAIN: &[(&str, &[&str])] = &[
     ("service_logins", &["id", "service_id", "position", "created_at", "updated_at"]),
     ("bridge_settings", &["id", "enabled", "created_at", "updated_at"]),
     ("browser_clients", &["id", "client_id", "created_at", "last_seen_at"]),
+    // Read before unlock, so never sealed (schema v9, `background.rs`).
+    ("app_settings", &["key", "value", "updated_at"]),
     (
         "key_slots",
         &[
