@@ -11,6 +11,8 @@
 
 const ICON = 20
 const GAP = 4
+/** How often to check where the field is while something of ours is on screen. */
+const FOLLOW_MS = 150
 const ROW = 44
 const FOOTER = 33
 /** The panel's 1 px border, top and bottom. */
@@ -57,6 +59,18 @@ const RESET = {
 
 const canPop = (element: HTMLElement): boolean => typeof element.showPopover === 'function'
 
+/** The field and everything around it, through shadow roots: a hit on one of these is the
+ * field itself, not a button of the page's drawn over it. */
+function around(field: Element): Set<Element> {
+  const set = new Set<Element>()
+  let node: Node | null = field
+  while (node) {
+    if (node instanceof Element) set.add(node)
+    node = node.parentNode ?? (node instanceof ShadowRoot ? node.host : null)
+  }
+  return set
+}
+
 /** An element's inline declarations, without custom properties (`--…`, which some
  * extensions, such as dark-mode ones, add to every styled element: they change nothing here). */
 function declarations(element: HTMLElement): Map<string, string> {
@@ -90,6 +104,10 @@ export class Overlay {
   private frameRows = 1
   private frameRequested = false
   private pending = 0
+  /** The timer that follows the field while something of ours is shown (see `follow`). */
+  private following = 0
+  /** showIcon() was called and hideIcon() wasn't since. */
+  private iconWanted = false
   private badges: { host: Host; target: Element; text: string }[] = []
   /** The page tampered with our elements: no more badges on it. */
   private noBadges = false
@@ -157,13 +175,60 @@ export class Overlay {
   }
 
   private show(host: Host): void {
-    this.write(host, { display: 'block' })
+    if (host.style.get('display') !== 'block!important') this.write(host, { display: 'block' })
     if (canPop(host.element) && !host.element.matches(':popover-open')) host.element.showPopover()
   }
 
   private hide(host: Host): void {
     if (canPop(host.element) && host.element.matches(':popover-open')) host.element.hidePopover()
-    this.write(host, { display: 'none' })
+    if (host.style.get('display') !== 'none!important') this.write(host, { display: 'none' })
+  }
+
+  /** Writes only what changed: a style write the page didn't make is still a mutation. */
+  private move(host: Host, styles: Record<string, string>): void {
+    const changed = Object.entries(styles).filter(([name, value]) => host.style.get(name) !== `${value}!important`)
+    if (changed.length) this.write(host, Object.fromEntries(changed))
+  }
+
+  /**
+   * Pages move fields without scrolling or resizing anything: a card that slides or fades
+   * in, a banner or an error shown above the form, a dialog that centres itself again. No
+   * event says so, and the icon stayed where the field was. So while something of ours is
+   * on screen, look where its field is a few times a second (one measurement; nothing is
+   * written unless it moved). Nothing runs once it's all hidden.
+   */
+  private follow(on: boolean): void {
+    if (on && !this.following) {
+      this.following = window.setInterval(() => this.schedule(), FOLLOW_MS)
+    } else if (!on && this.following) {
+      clearInterval(this.following)
+      this.following = 0
+    }
+  }
+
+  /**
+   * Where the icon goes: at the field's right end, or left of the page's own buttons there
+   * (show password, clear, a caps-lock sign), so it never covers them or takes their clicks.
+   */
+  private iconLeft(field: HTMLInputElement, rect: DOMRect): number {
+    let right = rect.right - 8
+    if (typeof document.elementsFromPoint !== 'function') return Math.round(right - ICON)
+    const ours = new Set<Element>([this.icon, this.menu, ...this.badges.map((badge) => badge.host)].flatMap((host) => (host ? [host.element] : [])))
+    const field_ = around(field)
+    const y = rect.top + rect.height / 2
+    // At most two buttons side by side (an eye and a clear button), and never past the
+    // field's middle: anything wider is the page's own field drawn over the input.
+    for (let i = 0; i < 2; i++) {
+      const hit = [right - 3, right - ICON / 2]
+        .map((x) => document.elementsFromPoint(x, y).find((element) => !ours.has(element)))
+        .find((element) => element && !field_.has(element))
+      if (!hit) break
+      // The whole button, not the svg inside it that was hit.
+      const box = (hit.closest('button,[role="button"],a,label') ?? hit).getBoundingClientRect()
+      if (box.width === 0 || box.width > rect.width / 2 || box.left < rect.left + rect.width / 2) break
+      right = box.left - GAP
+    }
+    return Math.round(right - ICON)
   }
 
   /** The page changed our elements: close the menu, and make them again next time. */
@@ -220,10 +285,12 @@ export class Overlay {
       host.root.append(button)
       this.icon = host
     }
+    this.iconWanted = true
     this.place()
   }
 
   hideIcon(): void {
+    this.iconWanted = false
     if (this.icon) this.hide(this.icon)
   }
 
@@ -350,6 +417,13 @@ export class Overlay {
   }
 
   private place(): void {
+    const shown = this.placeAll()
+    this.follow(shown)
+  }
+
+  /** Puts everything where it belongs; says whether anything is on screen. */
+  private placeAll(): boolean {
+    let shown = false
     for (const { host, target } of this.badges) {
       const rect = target.getBoundingClientRect()
       // On the button's top edge, at its right end.
@@ -357,26 +431,28 @@ export class Overlay {
         this.hide(host)
         continue
       }
-      this.write(host, { left: `${Math.round(Math.max(GAP, rect.right - 8 - BADGE_WIDTH))}px`, top: `${Math.round(rect.top - 9)}px` })
+      this.move(host, { left: `${Math.round(Math.max(GAP, rect.right - 8 - BADGE_WIDTH))}px`, top: `${Math.round(rect.top - 9)}px` })
       this.show(host)
+      shown = true
     }
     const field = this.field
     if (!field || !field.isConnected) {
       this.hideIcon()
       this.hideMenu()
-      return
+      return shown
     }
     const rect = field.getBoundingClientRect()
     const onScreen = rect.width >= 60 && rect.height >= 16 && rect.bottom > 0 && rect.top < innerHeight
     if (this.icon) {
-      if (onScreen) {
-        this.write(this.icon, {
-          left: `${Math.round(rect.right - ICON - 8)}px`,
+      if (onScreen && this.iconWanted) {
+        this.move(this.icon, {
+          left: `${this.iconLeft(field, rect)}px`,
           top: `${Math.round(rect.top + (rect.height - ICON) / 2)}px`,
           width: `${ICON}px`,
           height: `${ICON}px`,
         })
         this.show(this.icon)
+        shown = true
       } else {
         this.hide(this.icon)
       }
@@ -384,8 +460,9 @@ export class Overlay {
     if (this.menu && this.menuOpen) {
       if (!onScreen) {
         this.hideMenu()
-        return
+        return shown
       }
+      shown = true
       const width = Math.round(Math.min(Math.max(rect.width, 280), innerWidth - 2 * GAP))
       const left = Math.round(Math.min(Math.max(rect.left, GAP), innerWidth - width - GAP))
       // Above or below, as decided when it opened: it doesn't flip while open.
@@ -394,7 +471,8 @@ export class Overlay {
       if (left !== this.placed.left || top !== this.placed.top || width !== this.placed.width) {
         this.placed = { left, top, width, at: performance.now() }
       }
-      this.write(this.menu, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${MENU_HEIGHT}px` })
+      this.move(this.menu, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${MENU_HEIGHT}px` })
     }
+    return shown
   }
 }
