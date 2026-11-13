@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::cell::Cell;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
@@ -44,6 +45,7 @@ use crate::validation::{
     validate_optional_text,
 };
 use crate::dotenv::{self, EnvText};
+use crate::export::{Layout, NewFolder, Progress, SaveStatus, SavedFiles};
 use crate::validation::{EnvSecretInput, MAX_ENV_SECRETS};
 use crate::workspace::{self, AccountLink, NewSecret, Sealed, SealedLogin, SealedService, Workspace};
 use crate::validation::validate_service_logins;
@@ -1004,6 +1006,17 @@ pub struct SkippedFile {
 /// Dropped files stay importable this long after the drop.
 const DROP_TTL: Duration = Duration::from_secs(120);
 
+/// The most files one bulk save takes.
+const MAX_EXPORT_FILES: usize = 5_000;
+
+/// A bulk save checked and ready (`Vault::plan_export`): which files, in what order.
+#[derive(Debug)]
+pub struct ExportPlan {
+    project_id: i64,
+    project: String,
+    files: Vec<workspace::ProjectFile>,
+}
+
 /// Writes a decrypted secret where the user chose, readable by them only.
 fn write_private(path: &Path, bytes: &[u8]) -> VaultResult<()> {
     let failure =
@@ -1393,6 +1406,110 @@ impl Vault {
         let stored = self.with_database(|db| workspace::secret_payload(db.connection(), id))?;
         let plain = crypto::decrypt_bytes(&stored.payload, &key)?;
         write_private(destination, &plain)
+    }
+
+    /// Checks a bulk save before the folder picker opens: the files must all still be
+    /// files of that project. Reads names and sizes only.
+    pub fn plan_export(&self, project_id: i64, ids: &[i64]) -> VaultResult<ExportPlan> {
+        self.require_unlocked()?;
+        let project_id = validate_id(project_id, "project id")?;
+        if ids.is_empty() {
+            return Err(VaultError::invalid_input("Choose at least one file to save."));
+        }
+        if ids.len() > MAX_EXPORT_FILES {
+            return Err(VaultError::invalid_input(format!(
+                "At most {MAX_EXPORT_FILES} files can be saved at once."
+            )));
+        }
+        let (project, files) = self.with_database(|db| {
+            let conn = db.connection();
+            Ok((workspace::project_name(conn, project_id)?, workspace::project_files(conn, project_id)?))
+        })?;
+        let mut by_id: std::collections::HashMap<i64, workspace::ProjectFile> =
+            files.into_iter().map(|file| (file.id, file)).collect();
+        let mut chosen = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let id = validate_id(id, "file id")?;
+            // A repeated id is saved once; an id that isn't one of its files fails it all.
+            match by_id.remove(&id) {
+                Some(file) => chosen.push(file),
+                None if chosen.iter().any(|file: &workspace::ProjectFile| file.id == id) => {}
+                None => {
+                    return Err(VaultError::not_found(
+                        "Some of these files were deleted or moved. Refresh and try again.",
+                    ));
+                }
+            }
+        }
+        Ok(ExportPlan {
+            project_id,
+            project,
+            files: chosen,
+        })
+    }
+
+    /// Saves decrypted copies of a plan's files into a new folder in `parent`, all or
+    /// nothing (`export.rs`). One file at a time: memory holds one file at most, and the
+    /// database is free between them. Stops, keeping nothing, when `cancel` is set or
+    /// the vault locks; `progress` hears of each file.
+    pub fn export_files(
+        &self,
+        plan: &ExportPlan,
+        layout: Layout,
+        parent: &Path,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(&Progress),
+    ) -> VaultResult<SavedFiles> {
+        let key = self.session_key()?;
+        let (_, epoch) = self.lock_state();
+        let still_open = || self.lock_state() == (true, epoch);
+        let locked = || VaultError::locked("The vault locked before the files were saved. Nothing was saved.");
+
+        let date = chrono::Local::now().format("%Y-%m-%d");
+        let mut folder = NewFolder::create(parent, &format!("{} files {date}", plan.project))?;
+        let mut sent = Progress {
+            done: 0,
+            total: plan.files.len(),
+            bytes: 0,
+            total_bytes: plan.files.iter().map(|file| file.size.max(0) as u64).sum(),
+        };
+        progress(&sent);
+        for file in &plan.files {
+            if cancel.load(Ordering::Acquire) {
+                return Ok(SavedFiles::nothing(SaveStatus::Cancelled));
+            }
+            if !still_open() {
+                return Err(locked());
+            }
+            let sealed = self.with_database(|db| workspace::file_payload(db.connection(), plan.project_id, file.id))?;
+            let plain = crypto::decrypt_bytes(&sealed, &key).map_err(|error| {
+                VaultError::internal(format!("“{}” couldn’t be decrypted. Nothing was saved.", file.name))
+                    .with_detail(error.message)
+            })?;
+            let group = match layout {
+                Layout::ByService => file.service.as_deref(),
+                Layout::Flat => None,
+            };
+            folder.write(group, &file.name, &plain)?;
+            sent.done += 1;
+            sent.bytes += plain.len() as u64;
+            progress(&sent);
+        }
+        // A cancel or a lock during the last file still keeps nothing.
+        if cancel.load(Ordering::Acquire) {
+            return Ok(SavedFiles::nothing(SaveStatus::Cancelled));
+        }
+        if !still_open() {
+            return Err(locked());
+        }
+        let path = folder.finish()?;
+        Ok(SavedFiles {
+            status: SaveStatus::Saved,
+            count: sent.done,
+            bytes: sent.bytes,
+            folder: path.display().to_string(),
+            path: Some(path),
+        })
     }
 
     pub fn account_links(&self) -> VaultResult<LinkList> {
@@ -3319,6 +3436,185 @@ mod tests {
             vault.account_links().unwrap().links.is_empty(),
             "links go with the account"
         );
+    }
+
+    /// A project with three files: two called "id_ed25519" (one for the whole project,
+    /// one for Coolify) and a binary one for Coolify. Returns the vault's folder, the
+    /// vault, the project, its file ids and each file's bytes by id.
+    fn project_with_files() -> (tempfile::TempDir, Vault, i64, Vec<i64>, std::collections::HashMap<i64, Vec<u8>>) {
+        let (directory, vault) = unlocked_vault();
+        let acme = project(&vault, "Acme");
+        let coolify = vault
+            .create_service(
+                acme,
+                &ServiceInput {
+                    name: "Coolify".into(),
+                    url: String::new(),
+                    accounts: Vec::new(),
+                    logins: Vec::new(),
+                },
+            )
+            .unwrap();
+        let source = directory.path().join("source");
+        std::fs::create_dir_all(source.join("server")).unwrap();
+        let whole = source.join("id_ed25519");
+        std::fs::write(&whole, "project key").unwrap();
+        let server = source.join("server").join("id_ed25519");
+        std::fs::write(&server, "server key").unwrap();
+        let binary = source.join("cert.p12");
+        std::fs::write(&binary, [0u8, 0xff, 0x10, 0x80]).unwrap();
+        let mut ids = vault.import_files(acme, None, &[whole]).unwrap().imported;
+        ids.extend(vault.import_files(acme, Some(coolify), &[server, binary]).unwrap().imported);
+        assert_eq!(ids.len(), 3);
+        let bytes = ids
+            .iter()
+            .zip([b"project key".to_vec(), b"server key".to_vec(), vec![0u8, 0xff, 0x10, 0x80]])
+            .map(|(id, bytes)| (*id, bytes))
+            .collect();
+        (directory, vault, acme, ids, bytes)
+    }
+
+    fn listing(path: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_bulk_save_writes_every_file_intact_into_a_new_folder() {
+        let (directory, vault, acme, ids, bytes) = project_with_files();
+        let out = directory.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let never = AtomicBool::new(false);
+
+        // Flat: same names numbered, every byte as imported, progress for each file.
+        let plan = vault.plan_export(acme, &ids).unwrap();
+        let mut heard = Vec::new();
+        let saved = vault
+            .export_files(&plan, Layout::Flat, &out, &never, |p| heard.push((p.done, p.total, p.bytes)))
+            .unwrap();
+        assert_eq!((saved.status, saved.count, saved.bytes), (SaveStatus::Saved, 3, 25));
+        assert_eq!(heard, [(0, 3, 0), (1, 3, 11), (2, 3, 21), (3, 3, 25)]);
+        let flat = saved.path.clone().unwrap();
+        assert_eq!(flat, out.join(format!("Acme files {date}")));
+        assert_eq!(saved.folder, flat.display().to_string());
+        assert_eq!(listing(&flat), ["cert.p12", "id_ed25519", "id_ed25519 (2)"]);
+        assert_eq!(std::fs::read(flat.join("id_ed25519")).unwrap(), bytes[&ids[0]]);
+        assert_eq!(std::fs::read(flat.join("id_ed25519 (2)")).unwrap(), bytes[&ids[1]]);
+        assert_eq!(std::fs::read(flat.join("cert.p12")).unwrap(), bytes[&ids[2]]);
+
+        // By service, saved again: a second folder, the first untouched.
+        let saved = vault.export_files(&plan, Layout::ByService, &out, &never, |_| {}).unwrap();
+        let grouped = saved.path.unwrap();
+        assert_eq!(grouped, out.join(format!("Acme files {date} (2)")));
+        assert_eq!(listing(&out), [format!("Acme files {date}"), format!("Acme files {date} (2)")]);
+        assert_eq!(listing(&grouped), ["Coolify", "id_ed25519"]);
+        assert_eq!(listing(&grouped.join("Coolify")), ["cert.p12", "id_ed25519"]);
+        assert_eq!(std::fs::read(grouped.join("Coolify").join("id_ed25519")).unwrap(), bytes[&ids[1]]);
+
+        // A chosen few, in the order given, a repeat saved once.
+        let plan = vault.plan_export(acme, &[ids[2], ids[2]]).unwrap();
+        let saved = vault.export_files(&plan, Layout::Flat, &out, &never, |_| {}).unwrap();
+        assert_eq!(saved.count, 1);
+        assert_eq!(listing(&saved.path.unwrap()), ["cert.p12"]);
+    }
+
+    #[test]
+    fn a_bulk_save_takes_only_that_projects_files() {
+        let (directory, vault, acme, ids, _) = project_with_files();
+        let other = project(&vault, "Other");
+        let text = vault
+            .create_text_secret(
+                acme,
+                SecretInput {
+                    name: "API_KEY".into(),
+                    value: "sk-1".into(),
+                    service_id: None,
+                    description: String::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(code(vault.plan_export(acme, &[])), ErrorCode::InvalidInput);
+        assert_eq!(code(vault.plan_export(other, &ids)), ErrorCode::NotFound, "another project's files");
+        assert_eq!(code(vault.plan_export(acme, &[ids[0], text])), ErrorCode::NotFound, "a text secret");
+        assert_eq!(code(vault.plan_export(acme, &[ids[0], 9_999])), ErrorCode::NotFound);
+        assert_eq!(code(vault.plan_export(9_999, &ids)), ErrorCode::NotFound);
+        assert_eq!(code(vault.plan_export(acme, &[-1])), ErrorCode::InvalidInput);
+        assert_eq!(
+            code(vault.plan_export(acme, &vec![ids[0]; MAX_EXPORT_FILES + 1])),
+            ErrorCode::InvalidInput
+        );
+
+        // Deleted between the plan and the save: nothing is kept.
+        let out = directory.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let plan = vault.plan_export(acme, &ids).unwrap();
+        vault.delete_secret(ids[2]).unwrap();
+        let never = AtomicBool::new(false);
+        assert_eq!(code(vault.export_files(&plan, Layout::Flat, &out, &never, |_| {})), ErrorCode::NotFound);
+        assert!(listing(&out).is_empty());
+
+        vault.lock();
+        assert_eq!(code(vault.plan_export(acme, &ids)), ErrorCode::VaultLocked);
+    }
+
+    #[test]
+    fn a_cancelled_or_locked_bulk_save_leaves_nothing_behind() {
+        let (directory, vault, acme, ids, _) = project_with_files();
+        let out = directory.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        let plan = vault.plan_export(acme, &ids).unwrap();
+
+        // Cancelled after the first file was written.
+        let cancel = AtomicBool::new(false);
+        let saved = vault
+            .export_files(&plan, Layout::Flat, &out, &cancel, |p| {
+                if p.done == 1 {
+                    cancel.store(true, Ordering::Release);
+                }
+            })
+            .unwrap();
+        assert_eq!((saved.status, saved.count), (SaveStatus::Cancelled, 0));
+        assert!(saved.path.is_none());
+        assert!(listing(&out).is_empty(), "no partial folder, hidden or not");
+
+        // Cancelled during the last file.
+        let cancel = AtomicBool::new(false);
+        let saved = vault
+            .export_files(&plan, Layout::Flat, &out, &cancel, |p| {
+                if p.done == p.total {
+                    cancel.store(true, Ordering::Release);
+                }
+            })
+            .unwrap();
+        assert_eq!(saved.status, SaveStatus::Cancelled);
+        assert!(listing(&out).is_empty());
+
+        // The vault locks part way.
+        let never = AtomicBool::new(false);
+        let result = vault.export_files(&plan, Layout::Flat, &out, &never, |p| {
+            if p.done == 1 {
+                vault.lock();
+            }
+        });
+        assert_eq!(code(result), ErrorCode::VaultLocked);
+        assert!(listing(&out).is_empty());
+
+        // Locked, then unlocked again before the next file: still a different session.
+        assert!(vault.unlock(MASTER).unwrap().valid);
+        let plan = vault.plan_export(acme, &ids).unwrap();
+        let result = vault.export_files(&plan, Layout::Flat, &out, &never, |p| {
+            if p.done == 1 {
+                vault.lock();
+                assert!(vault.unlock(MASTER).unwrap().valid);
+            }
+        });
+        assert_eq!(code(result), ErrorCode::VaultLocked);
+        assert!(listing(&out).is_empty());
     }
 
     #[test]

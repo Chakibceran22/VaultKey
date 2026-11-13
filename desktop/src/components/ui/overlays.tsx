@@ -7,7 +7,7 @@ import { Dialog } from '@base-ui/react/dialog'
 import { Menu as MenuPrimitive } from '@base-ui/react/menu'
 import { DotsThree, X } from '@phosphor-icons/react'
 import type { Icon } from '@phosphor-icons/react'
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { cn } from '@renderer/lib/utils'
 import { IconButton } from './icon-button'
 
@@ -32,11 +32,19 @@ export function Modal({
   /** A <form> made of <ModalBody> and <ModalFooter>. */
   children: ReactNode
 }) {
+  const popupRef = useRef<HTMLDivElement>(null)
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="backdrop-motion fixed inset-0 z-[200] bg-(--scrim)" />
         <Dialog.Popup
+          ref={popupRef}
+          // A field that asks for focus (`autoFocus`) keeps it. Otherwise the modal
+          // itself takes it, never the first button: that is the header's Close, and
+          // WebKit counts focus moved onto a just-mounted button as keyboard focus, so
+          // its "Close Esc" tooltip would open with every modal that has no text field.
+          // Tab still reaches Close first; a screen reader reads the title.
+          initialFocus={() => popupRef.current ?? true}
           className={cn(
             'glass-strong panel-motion modal-frame fixed left-1/2 z-[200] flex -translate-x-1/2 flex-col overflow-hidden rounded-2xl text-popover-foreground outline-none',
             widths[size]

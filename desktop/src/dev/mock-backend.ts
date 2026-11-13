@@ -9,6 +9,7 @@
  * "wrong", which exercises the failure path.
  */
 import { mockIPC } from '@tauri-apps/api/mocks'
+import { emit } from '@tauri-apps/api/event'
 import type { InvokeArgs } from '@tauri-apps/api/core'
 
 interface MockCredential {
@@ -699,11 +700,43 @@ function handle(cmd: string, args: Record<string, unknown>): unknown {
   }
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+let exportCancelled = false
+
+/** The bulk save: the native folder picker, then a file at a time with progress. */
+async function exportFiles(args: Record<string, unknown>): Promise<unknown> {
+  const ids = [...new Set(args.secretIds as number[])]
+  const files = ids.map((id) => secrets.find((s) => s.id === id && s.kind === 'file' && s.projectId === args.projectId))
+  if (ids.length === 0) fail('INVALID_INPUT', 'Choose at least one file to save.')
+  if (files.some((f) => !f)) fail('NOT_FOUND', 'Some of these files were deleted or moved. Refresh and try again.')
+  const project = projects.find((p) => p.id === args.projectId)?.name ?? 'Project'
+  exportCancelled = false
+  await sleep(700) // the folder picker
+  const total = files.length
+  const totalBytes = files.reduce((sum, f) => sum + (f?.size ?? 0), 0)
+  let bytes = 0
+  await emit('vault://export-progress', { done: 0, total, bytes, totalBytes })
+  for (const [index, file] of files.entries()) {
+    await sleep(Math.max(60, 2200 / total))
+    if (exportCancelled) return { status: 'cancelled', count: 0, bytes: 0, folder: '' }
+    bytes += file?.size ?? 0
+    await emit('vault://export-progress', { done: index + 1, total, bytes, totalBytes })
+  }
+  const date = new Date().toISOString().slice(0, 10)
+  return { status: 'saved', count: total, bytes, folder: `/Users/you/Downloads/${project} files ${date}` }
+}
+
 export function installMockBackend(): void {
   mockIPC(async (cmd: string, payload?: InvokeArgs) => {
     // A little latency, so loading states are visible like in the app.
     await new Promise((resolve) => setTimeout(resolve, 60))
     const args = (payload ?? {}) as Record<string, unknown>
+    if (cmd === 'export_files') return exportFiles(args)
+    if (cmd === 'cancel_export') {
+      exportCancelled = true
+      return null
+    }
+    if (cmd === 'reveal_exported') return null
     if (cmd === 'factor_code') {
       const secret = factorSecrets.get(args.factorId as number)
       if (!secret) fail('NOT_FOUND', 'No setup key is saved for this.')
@@ -712,6 +745,12 @@ export function installMockBackend(): void {
     // Copied like real IPC (JSON over the bridge): never hand out the live arrays,
     // or an in-place change would look unchanged to the query cache.
     return structuredClone(handle(cmd, args))
-  })
+  }, { shouldMockEvents: true })
+  // @tauri-apps/api's event mock removes a listener by `id`, but `unlisten` sends
+  // `eventId`: without this, a stopped listener stays and every later event warns.
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+  const invoke = internals.invoke
+  internals.invoke = (cmd, args, options) =>
+    invoke(cmd, cmd === 'plugin:event|unlisten' ? { ...(args as object), id: (args as { eventId: number }).eventId } : args, options)
   document.documentElement.dataset.preview = 'browser'
 }

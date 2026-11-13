@@ -9,6 +9,7 @@ mod crypto;
 mod db;
 mod dotenv;
 mod error;
+mod export;
 mod idle;
 mod paths;
 mod recovery;
@@ -160,6 +161,7 @@ pub fn run() {
                 );
             }
             app.manage(Vault::open(database_path));
+            app.manage(commands::Exports::default());
             // Settings and the tray icon first: the idle timer reads the auto-lock delay.
             background::start(app.handle());
             idle::start(app.handle());
@@ -265,6 +267,9 @@ pub fn run() {
             commands::recover_vault,
             commands::security_status,
             commands::export_secret,
+            commands::export_files,
+            commands::cancel_export,
+            commands::reveal_exported,
             commands::list_account_links,
             commands::set_sign_in_links,
             commands::set_account_links,

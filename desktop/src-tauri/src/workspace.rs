@@ -558,6 +558,55 @@ pub fn secret_payload(conn: &Connection, id: i64) -> VaultResult<StoredSecret> {
     .ok_or_else(|| VaultError::not_found("Secret not found."))
 }
 
+/// A project's file as a bulk save needs it: what it is called and where it is kept,
+/// never its payload.
+#[derive(Debug, Clone)]
+pub struct ProjectFile {
+    pub id: i64,
+    pub name: String,
+    pub size: i64,
+    /// The service it is kept for; `None` for the whole project.
+    pub service: Option<String>,
+}
+
+pub fn project_name(conn: &Connection, id: i64) -> VaultResult<String> {
+    conn.query_row("SELECT name FROM projects WHERE id = ?1", [id], |row| row.get(0))
+        .optional()?
+        .ok_or_else(|| VaultError::not_found("Project not found."))
+}
+
+/// Every file of a project (text secrets aside), with its service's name.
+pub fn project_files(conn: &Connection, project_id: i64) -> VaultResult<Vec<ProjectFile>> {
+    let mut statement = conn.prepare(
+        "SELECT s.id, s.name, s.size, v.name FROM secrets s
+         LEFT JOIN services v ON v.id = s.service_id
+         WHERE s.project_id = ?1 AND s.kind = 'file'
+         ORDER BY s.id",
+    )?;
+    let files = statement
+        .query_map([project_id], |row| {
+            Ok(ProjectFile {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                size: row.get(2)?,
+                service: row.get(3)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(files)
+}
+
+/// One file's sealed payload, if it is still a file of that project.
+pub fn file_payload(conn: &Connection, project_id: i64, id: i64) -> VaultResult<Vec<u8>> {
+    conn.query_row(
+        "SELECT payload FROM secrets WHERE id = ?1 AND project_id = ?2 AND kind = 'file'",
+        [id, project_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .ok_or_else(|| VaultError::not_found("A file was deleted while it was being saved. Nothing was saved."))
+}
+
 /// Renames / re-attaches a secret, and replaces its sealed value and its sealed
 /// description when given (`Some(None)` clears the description).
 pub fn update_secret(

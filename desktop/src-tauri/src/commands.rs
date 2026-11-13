@@ -6,12 +6,18 @@
 //!    async runtime stalls during Argon2id/scrypt,
 //! 3. logs failures (operation + code only) and returns `{ code, message }` errors.
 
-use tauri::{AppHandle, Manager, Webview};
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use tauri::{AppHandle, Emitter, Manager, Webview};
 use tauri_plugin_dialog::DialogExt;
 use zeroize::Zeroizing;
 
 use crate::account_details::AccountDetails;
 use crate::error::{VaultError, VaultResult, log_failure};
+use crate::export::{self, Layout, SaveStatus, SavedFiles};
 use crate::totp::TotpCode;
 use crate::validation::{
     AccountSecretInput, AccountSecretUpdateInput, CredentialInput, CredentialUpdateInput,
@@ -521,6 +527,112 @@ pub async fn export_secret(
         })?;
         vault.export_secret(secret_id, &path)?;
         Ok(Exported { saved: true })
+    })
+    .await
+}
+
+/// The bulk save in progress (one at a time), and the folder the last one made.
+#[derive(Default)]
+pub struct Exports {
+    running: AtomicBool,
+    cancel: AtomicBool,
+    last_folder: Mutex<Option<PathBuf>>,
+}
+
+/// Clears `running` however the save ends.
+struct Running<'a>(&'a AtomicBool);
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// How often progress is sent at most: smooth, without flooding the page with events
+/// when a project holds hundreds of small files.
+const PROGRESS_EVERY: Duration = Duration::from_millis(50);
+
+/// Saves decrypted copies of some of a project's files into a new folder, inside the
+/// one chosen in the native picker (opened from Rust: the page names files by id, never
+/// a path). All or nothing (`export.rs`). Progress is sent as `vault://export-progress`;
+/// `cancel_export` stops it, keeping nothing.
+#[tauri::command]
+pub async fn export_files(
+    app: AppHandle,
+    webview: Webview,
+    project_id: i64,
+    secret_ids: Vec<i64>,
+    layout: Layout,
+) -> VaultResult<SavedFiles> {
+    let handle = app.clone();
+    run("files export", app, webview, move |vault| {
+        // Checked before the picker opens, so a stale list fails before asking anything.
+        let plan = vault.plan_export(project_id, &secret_ids)?;
+        let exports = handle.state::<Exports>();
+        if exports.running.swap(true, Ordering::AcqRel) {
+            return Err(VaultError::invalid_input("Files are already being saved."));
+        }
+        let _running = Running(&exports.running);
+        exports.cancel.store(false, Ordering::Release);
+
+        let mut picker = handle
+            .dialog()
+            .file()
+            .set_title("Choose where to save the files")
+            .set_can_create_directories(true);
+        if let Ok(downloads) = handle.path().download_dir() {
+            picker = picker.set_directory(downloads);
+        }
+        let Some(parent) = picker.blocking_pick_folder() else {
+            return Ok(SavedFiles::nothing(SaveStatus::Dismissed));
+        };
+        let parent = parent.into_path().map_err(|error| {
+            VaultError::invalid_input("That folder can’t be written to. Choose another one.").with_detail(error)
+        })?;
+
+        let mut last_sent: Option<Instant> = None;
+        let saved = vault.export_files(&plan, layout, &parent, &exports.cancel, |progress| {
+            let now = Instant::now();
+            let finished = progress.done == progress.total;
+            if finished || last_sent.is_none_or(|at| now.duration_since(at) >= PROGRESS_EVERY) {
+                last_sent = Some(now);
+                let _ = handle.emit_to(MAIN_WINDOW, "vault://export-progress", progress);
+            }
+        })?;
+        if let Some(path) = &saved.path {
+            *exports.last_folder.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(path.clone());
+        }
+        Ok(saved)
+    })
+    .await
+}
+
+/// Stops the bulk save in progress; what it wrote so far is removed.
+#[tauri::command]
+pub async fn cancel_export(app: AppHandle, webview: Webview) -> VaultResult<()> {
+    let handle = app.clone();
+    run("files export cancel", app, webview, move |_| {
+        handle.state::<Exports>().cancel.store(true, Ordering::Release);
+        Ok(())
+    })
+    .await
+}
+
+/// Shows the folder the last bulk save made in Finder, Explorer or the file manager.
+#[tauri::command]
+pub async fn reveal_exported(app: AppHandle, webview: Webview) -> VaultResult<()> {
+    let handle = app.clone();
+    run("export reveal", app, webview, move |vault| {
+        vault.require_unlocked()?;
+        let folder = handle
+            .state::<Exports>()
+            .last_folder
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .filter(|folder| folder.is_dir())
+            .ok_or_else(|| VaultError::not_found("That folder was moved or deleted."))?;
+        export::reveal(&folder)
     })
     .await
 }

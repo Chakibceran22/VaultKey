@@ -115,7 +115,7 @@ Your data comes along on its own:
 | Area | What you keep there |
 |---|---|
 | **Accounts** | Website, email, username, and how it signs in: a **password**, **another account** ("Sign in with Google"), or both, or **no password** (passkey only). Each account's page has everything it takes to get back in: **sign-in steps** (authenticator app with its live six-digit code, passkey, security key, text message, email code, sign-in prompt), **recovery codes** and a **recovery account**; **secrets and notes** kept with it; and its **connections**: what signs in with it, what it recovers, the devices it's signed in on (with a note each: "GitHub Mobile, authenticator"), and the projects that use it. Accounts are grouped by what they're for (Email and identity, Developer and cloud, Money, Games…). |
-| **Projects** | A project's **services** (Coolify, Vercel, a database, a private server…). A service can use **accounts** from the vault, each with its role there ("admin", "deploy only"), and keep its **own logins**: an address (URL, hostname or IP) with a username, password and note, for what has no website account, like a server's root user. Its **secrets** (API keys, tokens, environment variables), each with a description, and its **files** (SSH keys, certificates, .env files, anything up to 25 MB): pick them or drop them on the window, rename them, describe them. |
+| **Projects** | A project's **services** (Coolify, Vercel, a database, a private server…). A service can use **accounts** from the vault, each with its role there ("admin", "deploy only"), and keep its **own logins**: an address (URL, hostname or IP) with a username, password and note, for what has no website account, like a server's root user. Its **secrets** (API keys, tokens, environment variables), each with a description, and its **files** (SSH keys, certificates, .env files, anything up to 25 MB): pick them or drop them on the window, rename them, describe them, and **download** them, one or many at once (tick them, shift-click for a range, or "Download all"), into a new folder, all together or a folder per service. |
 | **Devices** | Your phones, computers, tablets and security keys: the sign-in steps that live on each one, the accounts signed in on it, and a warning about accounts with no backup if you lost it. |
 | **Search** | ⌘K (Ctrl+K), in your own words: "github recovery codes", "what signs in with google", "device for coolify", "root prod server". It follows the links between things, shows how it read the question, and the path to each answer. |
 
@@ -325,6 +325,11 @@ file can read it. The secrets themselves need your master password or recovery c
   the vault key, checked, and only then given their final name.
 - **One app at a time** can open the vault: a second copy shows "already open in
   another window".
+- **Downloading files is all or nothing, too.** The decrypted copies go into a hidden
+  folder that takes its name ("Acme files 2026-11-13") only once every file is written;
+  stopping, a failure or the vault locking removes it. It is always a new folder, so
+  nothing on your disk is replaced, and on macOS and Linux only your user can open it
+  (folders 0700, files 0600). File names are made safe for every system first.
 - **No network.** The page's content security policy only lets it talk to the app's
   own Rust core. The browser extension reaches VaultKey through a local socket (a named
   pipe on Windows) that only your user can open, never over the network.
@@ -579,6 +584,7 @@ Rust core (src-tauri/src/)
   workspace.rs        SQL: projects, services (accounts, logins), secrets, files, links
   account_details.rs  SQL: devices, sign-in steps, account secrets and notes
   dotenv.rs           reads .env files into secrets
+  export.rs           downloading many files: safe names, a new folder, all or nothing
   totp.rs             authenticator codes (RFC 6238)
   db.rs               SQLite: WAL, FULL sync + fullfsync, migrations, verified backups
   validation.rs       input rules

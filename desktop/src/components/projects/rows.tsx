@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CaretRight,
+  Check,
   DownloadSimple,
   Eye,
   EyeSlash,
@@ -238,7 +239,7 @@ export function ServiceRow({
   )
 }
 
-function fileIcon(secret: SecretMeta): Icon {
+export function fileIcon(secret: SecretMeta): Icon {
   if (secret.kind === 'text') return Key
   if (secret.mimeType.startsWith('image/')) return FileImage
   if (secret.mimeType === 'application/x-pem-file' || secret.mimeType === 'application/pgp-encrypted') return FileLock
@@ -246,15 +247,27 @@ function fileIcon(secret: SecretMeta): Icon {
   return File
 }
 
+/** A row's place in a list that can be selected (the Files list, to download several). */
+export interface RowSelection {
+  selected: boolean
+  /** Something in the list is selected: every row shows its checkbox. */
+  selecting: boolean
+  /** `range`: shift-click, from the last one toggled to this one. */
+  onToggle: (range: boolean) => void
+}
+
 /** A text secret or a file. Values are decrypted only when shown, copied or saved. */
 export function SecretRow({
   secret,
   serviceName,
+  selection,
   onEdit,
   onDelete
 }: {
   secret: SecretMeta
   serviceName: string | undefined
+  /** Given, its icon turns into a checkbox on hover, on focus, and while selecting. */
+  selection?: RowSelection
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -287,12 +300,21 @@ export function SecretRow({
   const where = serviceName ?? 'Whole project'
   const open = shown !== null
   return (
-    <li className="group">
+    <li
+      className={cn(
+        'group transition-colors duration-100',
+        selection?.selected && 'bg-primary/[0.06] dark:bg-primary/[0.09]'
+      )}
+    >
       {/* One 44 px line, columns in fixed slots so every row lines up. */}
       <div className="flex h-11 items-center gap-3 pr-2 pl-4 transition-colors duration-100 hover:bg-secondary/40">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-muted-foreground dark:bg-white/8">
-          <RowIcon size={13} />
-        </span>
+        {selection ? (
+          <SelectBox name={secret.name} icon={RowIcon} selection={selection} />
+        ) : (
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-muted-foreground dark:bg-white/8">
+            <RowIcon size={13} />
+          </span>
+        )}
         <p className="min-w-0 flex-1 truncate" title={secret.description || undefined}>
           <span className="font-mono text-[13.5px] text-heading" data-selectable>
             {secret.name}
@@ -344,5 +366,49 @@ export function SecretRow({
         </div>
       )}
     </li>
+  )
+}
+
+/**
+ * The file's icon, and in the same 24 px slot its checkbox: shown on hover, on keyboard
+ * focus and while anything is selected, so a list at rest stays quiet. Its hit area
+ * reaches past the tile to the row's height.
+ */
+function SelectBox({ name, icon: RowIcon, selection }: { name: string; icon: Icon; selection: RowSelection }) {
+  const { selected, selecting, onToggle } = selection
+  const showBox = selected || selecting
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={selected}
+      aria-label={`Select ${name}`}
+      onClick={(event) => onToggle(event.shiftKey)}
+      // Shift-click selects a range: keep the browser from selecting text with it.
+      onMouseDown={(event) => event.shiftKey && event.preventDefault()}
+      className="group/box relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-[7px] outline-none before:absolute before:-inset-2.5 focus-visible:ring-2 focus-visible:ring-ring/50"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute inset-0 flex items-center justify-center rounded-[7px] bg-secondary text-muted-foreground transition-opacity duration-100 dark:bg-white/8',
+          showBox ? 'opacity-0' : 'group-hover:opacity-0 group-focus-visible/box:opacity-0'
+        )}
+      >
+        <RowIcon size={13} />
+      </span>
+      <span
+        aria-hidden="true"
+        className={cn(
+          'relative flex size-4 items-center justify-center rounded-[5px] border-[1.5px] transition-[opacity,background-color,border-color,scale] duration-100 group-active/box:scale-90 motion-reduce:group-active/box:scale-100',
+          selected
+            ? 'border-primary bg-primary text-primary-foreground'
+            : 'border-muted-foreground/40 bg-background/70 group-hover/box:border-primary/70 dark:bg-background/40',
+          showBox ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible/box:opacity-100'
+        )}
+      >
+        {selected && <Check size={10} weight="bold" />}
+      </span>
+    </button>
   )
 }

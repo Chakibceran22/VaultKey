@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileArrowUp, FilePlus, Plus, Trash } from '@phosphor-icons/react'
+import { DownloadSimple, FileArrowUp, FilePlus, Plus, Trash } from '@phosphor-icons/react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { AccountSummary, SecretMeta, Service, StagedList } from '@renderer/shared/contracts'
 import { RelatedGroup } from '@renderer/components/accounts/parts'
@@ -18,6 +18,7 @@ import {
 import { SecretRow, ServiceRow, type ServiceAccountView } from '@renderer/components/projects/rows'
 import { SecretForm, ServiceForm } from '@renderer/components/projects/forms'
 import { UploadFiles } from '@renderer/components/projects/UploadFiles'
+import { SaveFiles } from '@renderer/components/projects/SaveFiles'
 import { ImportEnv } from '@renderer/components/projects/ImportEnv'
 import { ListFilter, listFooter, MoreLine, NoMatchLine, useLongList, useSlashToFilter } from '@renderer/components/layout/long-list'
 import { Button } from '@renderer/components/ui/button'
@@ -25,9 +26,9 @@ import { useConfirm } from '@renderer/components/ui/confirm'
 import { InlineEdit } from '@renderer/components/ui/controls'
 import { Spinner } from '@renderer/components/ui/misc'
 import { Modal, RowMenu, RowMenuItem } from '@renderer/components/ui/overlays'
-import { hostOf, plural, refreshVault, useAccounts, useRelations, useWorkspace } from '@renderer/hooks/use-vault'
+import { formatSize, hostOf, plural, refreshVault, useAccounts, useRelations, useWorkspace } from '@renderer/hooks/use-vault'
 import { api } from '@renderer/lib/api'
-import { isModKey, isOverlayOpen, MOD } from '@renderer/lib/dom'
+import { isModKey, isOverlayOpen, isTyping, MOD } from '@renderer/lib/dom'
 import { useDropTarget } from '@renderer/lib/drop-target'
 import { unwrap } from '@renderer/lib/ipc'
 import { toast } from '@renderer/lib/toast'
@@ -37,6 +38,7 @@ type ModalState =
   | { open: boolean; kind: 'secret'; secret: SecretMeta | null }
   | { open: boolean; kind: 'upload'; incoming: StagedList | null }
   | { open: boolean; kind: 'env'; incoming: StagedList | null }
+  | { open: boolean; kind: 'download'; files: SecretMeta[] }
 
 /**
  * Pattern: Detail / Record. One project: name and description edited in place,
@@ -57,6 +59,12 @@ export default function ProjectPage(): React.ReactElement {
   const setDropped = useDropTarget((s) => s.setDropped)
   const [modal, setModal] = useState<ModalState>({ open: false, kind: 'service', service: null })
   const [openService, setOpenService] = useState<number | null>(null)
+  // Files chosen to download together, and the last one toggled (where a shift-click
+  // range starts). Ids only: a file deleted meanwhile simply drops out.
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
+  const anchor = useRef<number | null>(null)
+  // The download dialog is choosing a folder or writing: it can't be closed then.
+  const [downloading, setDownloading] = useState(false)
 
   const project = projects.find((p) => p.id === projectId)
   const projectServices = services.filter((s) => s.projectId === projectId)
@@ -80,6 +88,46 @@ export default function ProjectPage(): React.ReactElement {
   const secretList = useLongList(textSecrets, kept)
   const fileList = useLongList(files, kept)
   useSlashToFilter()
+
+  const selectedFiles = files.filter((f) => selected.has(f.id))
+  const selecting = selectedFiles.length > 0
+  const clearSelection = (): void => {
+    setSelected(new Set())
+    anchor.current = null
+  }
+  const toggleFile = (id: number, range: boolean): void => {
+    const order = fileList.visible.map((f) => f.id)
+    const from = anchor.current === null ? -1 : order.indexOf(anchor.current)
+    const to = order.indexOf(id)
+    setSelected((current) => {
+      const next = new Set(current)
+      if (range && from >= 0 && to >= 0) {
+        // Like Finder: everything between the last one toggled and this one.
+        for (const between of order.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(between)
+      } else if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    anchor.current = id
+  }
+  const allMatchingSelected = fileList.matching.every((f) => selected.has(f.id))
+  const selectAllMatching = (): void =>
+    setSelected((current) => new Set([...current, ...fileList.matching.map((f) => f.id)]))
+  const download = (chosen: SecretMeta[]): void => setModal({ open: true, kind: 'download', files: chosen })
+
+  // Another project: start with nothing selected.
+  useEffect(clearSelection, [projectId])
+
+  // Esc clears the selection (when nothing else wants it: a field, a filter, a modal).
+  useEffect(() => {
+    if (!selecting) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented || isTyping(event.target) || isOverlayOpen()) return
+      clearSelection()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selecting])
 
   // Files dropped onto the window go into this project while it is open.
   useEffect(() => {
@@ -221,6 +269,11 @@ export default function ProjectPage(): React.ReactElement {
     setModal((current) => ({ ...current, open: false }))
   }
 
+  const finishDownload = (saved: boolean): void => {
+    if (saved) clearSelection()
+    closeModal()
+  }
+
   const accountViews = (service: Service): ServiceAccountView[] =>
     service.accounts.flatMap(({ accountId, role }) => {
       const account = accounts.find((a) => a.id === accountId)
@@ -345,13 +398,42 @@ export default function ProjectPage(): React.ReactElement {
               id="section-files"
               title="Files"
               action={
-                <div className="flex items-center gap-2">
-                  <ListFilter list={fileList} label="Filter files" />
-                  <Button size="md" onClick={addFiles}>
-                    <FilePlus size={14} />
-                    Add files
-                  </Button>
-                </div>
+                selecting ? (
+                  // The selection bar, in the header's place: same height, nothing below moves.
+                  <div className="reveal-in flex min-w-0 items-center gap-2" role="toolbar" aria-label="Selected files">
+                    <p className="truncate pr-1 text-[13px] text-muted-foreground tabular-nums" aria-live="polite">
+                      <span className="font-medium text-heading">{selectedFiles.length} selected</span>
+                      {' · '}
+                      {formatSize(selectedFiles.reduce((sum, f) => sum + f.size, 0))}
+                    </p>
+                    {!allMatchingSelected && (
+                      <Button size="md" variant="ghost" onClick={selectAllMatching}>
+                        Select all {fileList.matching.length}
+                      </Button>
+                    )}
+                    <Button size="md" variant="ghost" onClick={clearSelection} title="Clear the selection (Esc)">
+                      Clear
+                    </Button>
+                    <Button size="md" variant="primary" onClick={() => download(selectedFiles)}>
+                      <DownloadSimple size={14} weight="bold" />
+                      Download {selectedFiles.length}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <ListFilter list={fileList} label="Filter files" />
+                    {files.length > 1 && (
+                      <Button size="md" variant="ghost" onClick={() => download(files)}>
+                        <DownloadSimple size={14} />
+                        Download all
+                      </Button>
+                    )}
+                    <Button size="md" onClick={addFiles}>
+                      <FilePlus size={14} />
+                      Add files
+                    </Button>
+                  </div>
+                )
               }
             >
               <ListFrame footer={listFooter(fileList, 'file')}>
@@ -360,6 +442,11 @@ export default function ProjectPage(): React.ReactElement {
                     key={secret.id}
                     secret={secret}
                     serviceName={serviceName(secret.serviceId)}
+                    selection={{
+                      selected: selected.has(secret.id),
+                      selecting,
+                      onToggle: (range) => toggleFile(secret.id, range)
+                    }}
                     onEdit={() => setModal({ open: true, kind: 'secret', secret })}
                     onDelete={() => void removeSecret(secret)}
                   />
@@ -412,10 +499,14 @@ export default function ProjectPage(): React.ReactElement {
 
       <Modal
         open={modal.open}
-        onOpenChange={(open) => !open && closeModal()}
-        size={modal.kind === 'env' ? 'lg' : 'md'}
+        // While a download chooses its folder or writes, it has to be finished or stopped.
+        onOpenChange={(open) => !open && !downloading && closeModal()}
+        closable={!downloading}
+        size={modal.kind === 'env' || modal.kind === 'download' ? 'lg' : 'md'}
         title={
-          modal.kind === 'upload'
+          modal.kind === 'download'
+            ? 'Download files'
+            : modal.kind === 'upload'
             ? 'Add files'
             : modal.kind === 'env'
               ? 'Import .env'
@@ -431,7 +522,16 @@ export default function ProjectPage(): React.ReactElement {
         }
         description={project.name}
       >
-        {modal.kind === 'upload' ? (
+        {modal.kind === 'download' ? (
+          <SaveFiles
+            projectId={project.id}
+            projectName={project.name}
+            files={modal.files}
+            serviceName={serviceName}
+            onBusyChange={setDownloading}
+            onDone={finishDownload}
+          />
+        ) : modal.kind === 'upload' ? (
           <UploadFiles projectId={project.id} services={projectServices} incoming={modal.incoming} onDone={closeModal} />
         ) : modal.kind === 'env' ? (
           <ImportEnv

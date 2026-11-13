@@ -315,6 +315,27 @@ export interface ImportReport {
   skipped: { name: string; reason: string }[]
 }
 
+/** How a bulk save arranges the files: all together, or a folder per service. */
+export type FilesLayout = 'flat' | 'byService'
+
+/** What a bulk save did. `dismissed`: the folder picker was closed; `cancelled`:
+ *  stopped part way, and what was written is gone. */
+export interface SavedFiles {
+  status: 'saved' | 'dismissed' | 'cancelled'
+  count: number
+  bytes: number
+  /** The new folder (empty unless saved). */
+  folder: string
+}
+
+/** A bulk save's progress, sent as `vault://export-progress`. */
+export interface SaveProgress {
+  done: number
+  total: number
+  bytes: number
+  totalBytes: number
+}
+
 /** One NAME=value line of a .env file; the comment on its line is its description. */
 export interface EnvEntry {
   line: number
@@ -472,6 +493,11 @@ export interface VaultApi {
     files: { token: number; name: string; description: string }[]
   ) => Promise<IpcResult<ImportReport>>
   exportSecret: (secretId: number) => Promise<IpcResult<{ saved: boolean }>>
+  /** Decrypted copies of a project's files, into a new folder chosen in the native picker. */
+  exportFiles: (projectId: number, secretIds: number[], layout: FilesLayout) => Promise<IpcResult<SavedFiles>>
+  cancelExport: () => Promise<IpcResult<void>>
+  /** Shows the folder the last bulk save made, in Finder / Explorer. */
+  revealExported: () => Promise<IpcResult<void>>
   /** The .env import: read pasted text, pick a file, read a dropped one, save the chosen secrets (all or none). */
   parseEnv: (text: string) => Promise<IpcResult<EnvFile>>
   pickEnvFile: () => Promise<IpcResult<EnvText | null>>
